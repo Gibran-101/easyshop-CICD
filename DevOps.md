@@ -257,12 +257,12 @@ Install:
 
 ####  NGINX Installation
 
-> ```bash
-> helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-> helm repo update
-> kubectl create namespace ingress-nginx
-> 
-> helm install nginx-ingress ingress-nginx/ingress-nginx   --namespace ingress-nginx   --set controller.service.type=LoadBalancer
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+kubectl create namespace ingress-nginx
+
+helm install nginx-ingress ingress-nginx/ingress-nginx   --namespace ingress-nginx   --set controller.service.type=LoadBalancer
 ```
 
 ###  Cert-Manager Setup
