@@ -5,7 +5,6 @@ metadata:
   name: mongodb-pv
 
 spec:
-  storageClassName: standard
 
   capacity:
     storage: 5Gi
