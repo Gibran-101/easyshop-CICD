@@ -7,11 +7,11 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: your-dockerhub-username/easyshop
-  K8S_NAMESPACE: default
+  IMAGE_NAME: gibranf/easyshop
+  K8S_NAMESPACE: easyshop
   DEPLOYMENT_BLUE: easyshop-blue
   DEPLOYMENT_GREEN: easyshop-green
-  SERVICE_NAME: easyshop-svc
+  SERVICE_NAME: easyshop-service
 
 jobs:
   build-and-deploy:
