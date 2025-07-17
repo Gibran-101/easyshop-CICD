@@ -1,70 +1,64 @@
-name: Deploy to Kubernetes (Blue-Green)
+name: CI/CD Pipeline
 
 on:
   push:
     branches:
-      - dev
+      - main
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: gibranf/easyshop
-  K8S_NAMESPACE: easyshop
+  IMAGE_NAME: easyshop
   DEPLOYMENT_BLUE: easyshop-blue
   DEPLOYMENT_GREEN: easyshop-green
-  SERVICE_NAME: easyshop-service
 
 jobs:
   build-and-deploy:
-    name: Build, Push & Deploy
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repo
-        uses: actions/checkout@v3
+    - name: Checkout source code
+      uses: actions/checkout@v3
 
-      - name: Log in to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker Image
-        run: |
-          docker build -t $REGISTRY/$IMAGE_NAME:${{ github.sha }} .
+    - name: Log in to DockerHub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Push Docker Image
-        run: |
-          docker push $REGISTRY/$IMAGE_NAME:${{ github.sha }}
+    - name: Set up Kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        echo "${{ secrets.KUBECONFIG_CONTENT }}" > $HOME/.kube/config
+        chmod 600 $HOME/.kube/config
 
-      - name: Set Current Active Deployment (Blue or Green)
-        id: get-active
-        run: |
-          ACTIVE=$(kubectl get svc $SERVICE_NAME -n $K8S_NAMESPACE -o=jsonpath='{.spec.selector.app}')
-          echo "ACTIVE=$ACTIVE" >> $GITHUB_OUTPUT
+    - name: Set environment variables
+      run: echo "SHORT_SHA=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
 
-      - name: Determine Target Deployment
-        id: set-target
-        run: |
-          if [[ "${{ steps.get-active.outputs.ACTIVE }}" == "${{ env.DEPLOYMENT_BLUE }}" ]]; then
-            echo "TARGET=${{ env.DEPLOYMENT_GREEN }}" >> $GITHUB_OUTPUT
-          else
-            echo "TARGET=${{ env.DEPLOYMENT_BLUE }}" >> $GITHUB_OUTPUT
-          fi
+    - name: Build Docker image and tag with latest
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/easyshop:${{ env.SHORT_SHA }} .
+        docker tag ${{ secrets.DOCKER_USERNAME }}/easyshop:${{ env.SHORT_SHA }} ${{ secrets.DOCKER_USERNAME }}/easyshop:latest
 
-      - name: Deploy to Inactive Deployment
-        run: |
-          kubectl set image deployment/${{ steps.set-target.outputs.TARGET }} easyshop=$REGISTRY/$IMAGE_NAME:${{ github.sha }} -n $K8S_NAMESPACE
-          kubectl rollout status deployment/${{ steps.set-target.outputs.TARGET }} -n $K8S_NAMESPACE
+    - name: Push Docker images (with SHA and latest tags)
+      run: |
+        docker push ${{ secrets.DOCKER_USERNAME }}/easyshop:${{ env.SHORT_SHA }}
+        docker push ${{ secrets.DOCKER_USERNAME }}/easyshop:latest
 
-      - name: Health Check New Deployment
-        run: |
-          kubectl wait --for=condition=available --timeout=60s deployment/${{ steps.set-target.outputs.TARGET }} -n $K8S_NAMESPACE
+    - name: Set active deployment
+      id: set-active
+      run: |
+        CURRENT_COLOR=$(kubectl get svc easyshop -o=jsonpath='{.spec.selector.app}')
+        echo "Currently live deployment: $CURRENT_COLOR"
+        if [[ "$CURRENT_COLOR" == "easyshop-blue" ]]; then
+          echo "COLOR=green" >> $GITHUB_ENV
+        else
+          echo "COLOR=blue" >> $GITHUB_ENV
+        fi
 
-      - name: Switch Service to New Deployment
-        run: |
-          kubectl patch svc $SERVICE_NAME -n $K8S_NAMESPACE -p \
-            "{\"spec\":{\"selector\":{\"app\":\"${{ steps.set-target.outputs.TARGET }}\"}}}"
-
-      - name: Optional: Scale Down Old Deployment
-        run: |
-          kubectl scale deployment/${{ steps.get-active.outputs.ACTIVE }} --replicas=0 -n $K8S_NAMESPACE
+    - name: Deploy to Kubernetes
+      run: |
+        kubectl set image deployment/${{ env.DEPLOYMENT_BLUE }} easyshop=${{ secrets.DOCKER_USERNAME }}/easyshop:${{ env.SHORT_SHA }} --record=true || true
+        kubectl set image deployment/${{ env.DEPLOYMENT_GREEN }} easyshop=${{ secrets.DOCKER_USERNAME }}/easyshop:${{ env.SHORT_SHA }} --record=true || true
