@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: easyshop
+  name: easyshoip-green
   namespace: easyshop
 spec:
   replicas: 2
