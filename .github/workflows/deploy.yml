@@ -39,19 +39,12 @@ jobs:
           ${{ env.IMAGE_NAME }}:latest
           ${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-    - name: Setup SSH
-      run: |
-        mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan -H ${{ secrets.VM_IP }} >> ~/.ssh/known_hosts
-
-
     - name: Set up SSH
       uses: webfactory/ssh-agent@v0.9.0
       with:
         ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+    #  FINAL STEP: SSH and deploy
     - name: Deploy on Remote VM via SSH
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.VM_USER }}@${{ secrets.VM_IP }} << 'EOF'
@@ -60,8 +53,8 @@ jobs:
         IMAGE="${{ env.IMAGE_NAME }}:latest"
 
         # Decide which deployment to update
-        CURRENT_COLOR=$(kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -o=jsonpath='{.spec.selector.app}')
-        
+        CURRENT_COLOR=$(kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.K8S_NAMESPACE }} -o=jsonpath='{.spec.selector.app}')
+
         if [ "$CURRENT_COLOR" == "${{ env.DEPLOYMENT_BLUE }}" ]; then
           NEW_DEPLOYMENT="${{ env.DEPLOYMENT_GREEN }}"
         else
@@ -69,19 +62,19 @@ jobs:
         fi
 
         # Update the deployment image
-        kubectl set image deployment/$NEW_DEPLOYMENT easyshop=$IMAGE -n ${{ env.NAMESPACE }}
+        kubectl set image deployment/$NEW_DEPLOYMENT easyshop=$IMAGE -n ${{ env.K8S_NAMESPACE }}
 
         # Wait for rollout
-        kubectl rollout status deployment/$NEW_DEPLOYMENT -n ${{ env.NAMESPACE }}
+        kubectl rollout status deployment/$NEW_DEPLOYMENT -n ${{ env.K8S_NAMESPACE }}
 
         # Update the service selector
-        kubectl patch svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -p "{\"spec\": {\"selector\": {\"app\": \"$NEW_DEPLOYMENT\"}}}"
+        kubectl patch svc ${{ env.SERVICE_NAME }} -n ${{ env.K8S_NAMESPACE }} -p "{\"spec\": {\"selector\": {\"app\": \"$NEW_DEPLOYMENT\"}}}"
 
         # Optional: scale down old deployment
         if [ "$NEW_DEPLOYMENT" == "${{ env.DEPLOYMENT_GREEN }}" ]; then
-          kubectl scale deployment/${{ env.DEPLOYMENT_BLUE }} --replicas=0 -n ${{ env.NAMESPACE }}
+          kubectl scale deployment/${{ env.DEPLOYMENT_BLUE }} --replicas=0 -n ${{ env.K8S_NAMESPACE }}
         else
-          kubectl scale deployment/${{ env.DEPLOYMENT_GREEN }} --replicas=0 -n ${{ env.NAMESPACE }}
+          kubectl scale deployment/${{ env.DEPLOYMENT_GREEN }} --replicas=0 -n ${{ env.K8S_NAMESPACE }}
         fi
 
         EOF
