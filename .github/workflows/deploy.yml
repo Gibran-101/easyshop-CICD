@@ -1,0 +1,79 @@
+name: CI/CD Pipeline - Blue Green Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  IMAGE_NAME: yourdockerhubusername/easyshop
+  DEPLOYMENT_BLUE: easyshop-blue
+  DEPLOYMENT_GREEN: easyshop-green
+  SERVICE_NAME: easyshop-service
+  NAMESPACE: default
+  CONTAINER_PORT: 3000
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to DockerHub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build and Push Docker Image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ env.IMAGE_NAME }}:latest
+          ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+    - name: Set up SSH
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Deploy on Remote VM via SSH
+      run: |
+        ssh -o StrictHostKeyChecking=no ${{ secrets.VM_USER }}@${{ secrets.VM_IP }} << 'EOF'
+
+        # Set image tag
+        IMAGE="${{ env.IMAGE_NAME }}:latest"
+
+        # Decide which deployment to update
+        CURRENT_COLOR=$(kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -o=jsonpath='{.spec.selector.app}')
+        
+        if [ "$CURRENT_COLOR" == "${{ env.DEPLOYMENT_BLUE }}" ]; then
+          NEW_DEPLOYMENT="${{ env.DEPLOYMENT_GREEN }}"
+        else
+          NEW_DEPLOYMENT="${{ env.DEPLOYMENT_BLUE }}"
+        fi
+
+        # Update the deployment image
+        kubectl set image deployment/$NEW_DEPLOYMENT easyshop=$IMAGE -n ${{ env.NAMESPACE }}
+
+        # Wait for rollout
+        kubectl rollout status deployment/$NEW_DEPLOYMENT -n ${{ env.NAMESPACE }}
+
+        # Update the service selector
+        kubectl patch svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -p "{\"spec\": {\"selector\": {\"app\": \"$NEW_DEPLOYMENT\"}}}"
+
+        # Optional: scale down old deployment
+        if [ "$NEW_DEPLOYMENT" == "${{ env.DEPLOYMENT_GREEN }}" ]; then
+          kubectl scale deployment/${{ env.DEPLOYMENT_BLUE }} --replicas=0 -n ${{ env.NAMESPACE }}
+        else
+          kubectl scale deployment/${{ env.DEPLOYMENT_GREEN }} --replicas=0 -n ${{ env.NAMESPACE }}
+        fi
+
+        EOF
