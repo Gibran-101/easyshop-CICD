@@ -6,11 +6,11 @@ on:
       - main
 
 env:
-  IMAGE_NAME: yourdockerhubusername/easyshop
+  IMAGE_NAME: gibranf/easyshop
   DEPLOYMENT_BLUE: easyshop-blue
   DEPLOYMENT_GREEN: easyshop-green
   SERVICE_NAME: easyshop-service
-  NAMESPACE: default
+  NAMESPACE: easyshop
   CONTAINER_PORT: 3000
 
 jobs:
