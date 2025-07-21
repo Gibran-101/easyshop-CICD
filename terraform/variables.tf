@@ -40,7 +40,7 @@ variable "kubernetes_version" {
 variable "vnet_name" {
   default     = "es-vnet"
   description = "VNet name"
-  type = string
+  type        = string
 }
 
 variable "vnet_address_space" {
@@ -57,4 +57,22 @@ variable "subnets" {
   }
   description = "Subnets map"
   type        = map(list(string))
+}
+
+variable "nsg_name" {
+  type = string
+}
+
+variable "nsg_rules" {
+  type = list(object({
+    name                       = string
+    priority                   = number
+    direction                  = string
+    access                     = string
+    protocol                   = string
+    source_port_range          = string
+    destination_port_range     = string
+    source_address_prefix      = string
+    destination_address_prefix = string
+  }))
 }

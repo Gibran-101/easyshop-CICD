@@ -16,11 +16,13 @@ module "aks" {
 }
 
 # -------------------------------- NETWORK BLOCK -----------------------------------
-module "network" {
+module "networks" {
   source              = "./modules/networks"
+  resource_group_name = var.resource_group_name
+  location            = var.location
   vnet_name           = var.vnet_name
   vnet_address_space  = var.vnet_address_space
   subnets             = var.subnets
-  location            = var.location
-  resource_group_name = var.resource_group_name
+  nsg_name            = var.nsg_name
+  nsg_rules           = var.nsg_rules
 }
