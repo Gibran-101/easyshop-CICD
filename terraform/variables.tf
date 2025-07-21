@@ -35,3 +35,26 @@ variable "kubernetes_version" {
   type        = string
   default     = "1.28.3"
 }
+
+# -------------------------------- NETWORK VARIABLES HERE -----------------------------------
+variable "vnet_name" {
+  default     = "es-vnet"
+  description = "VNet name"
+  type = string
+}
+
+variable "vnet_address_space" {
+  default     = ["10.0.0.0/16"]
+  description = "Address space for the VNet"
+  type        = list(string)
+}
+
+variable "subnets" {
+  default = {
+    "app-subnet"   = ["10.0.1.0/24"]
+    "db-subnet"    = ["10.0.2.0/24"]
+    "redis-subnet" = ["10.0.3.0/24"]
+  }
+  description = "Subnets map"
+  type        = map(list(string))
+}

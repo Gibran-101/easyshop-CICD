@@ -10,3 +10,12 @@ output "kube_config" {
   value     = module.aks.kube_config
   sensitive = true
 }
+
+# -------------------------------- NETWORK OUTPUTS HERE -----------------------------------
+output "vnet_id" {
+  value = module.network.vnet_id
+}
+
+output "subnet_ids" {
+  value = module.network.subnet_ids
+}
