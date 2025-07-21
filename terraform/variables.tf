@@ -1,35 +1,37 @@
-locals {
+variable "resource_group_name" {
+  description = "Name of the Azure Resource Group"
+  type        = string
+}
 
-  region          = "us-east-2"
-  environment     = "dev"
-  tags = {
-    Name          = "easyshop"
-    Environment   = "dev"
-    Terraform     = "true"
-  }
+variable "location" {
+  description = "Azure region where resources will be deployed"
+  type        = string
+}
 
-  # VPC Variables
-  vpc_name        = "easyshop"
-  vpc_cidr        = "10.0.0.0/16"
-  azs             = ["us-east-2a", "us-east-2b"]
-  public_subnets  = ["10.0.1.0/24", "10.0.2.0/24"]
-  private_subnets = ["10.0.3.0/24", "10.0.4.0/24"]
-  intra_subnets   = ["10.0.5.0/24", "10.0.6.0/24"]
+variable "acr_name" {
+  description = "Name of the Azure Container Registry"
+  type        = string
+}
 
-  # EKS Variables
-  cluster_name    = "easyshop-cluster"
-  cluster_version = "1.29"
-  eks_addon_versions = {
-    coredns = "v1.11.1-eksbuild.4"
-    kube-proxy = "v1.29.2-eksbuild.1"
-    vpc-cni = "v1.16.0-eksbuild.1"
-    aws-ebs-csi-driver = "v1.29.0-eksbuild.1"
-  }
+variable "aks_cluster_name" {
+  description = "Name of the AKS cluster"
+  type        = string
+}
 
-  # Security Group Variables
-  sg_name = "easyshop-sg"
+variable "node_count" {
+  description = "Number of nodes in the AKS cluster"
+  type        = number
+  default     = 2
+}
 
-  # Bastion Variables
-  key_name      = "easyshop"
-  instance_type = "t3.large"
+variable "vm_size" {
+  description = "The size of the virtual machines in the AKS node pool"
+  type        = string
+  default     = "Standard_DS2_v2"
+}
+
+variable "kubernetes_version" {
+  description = "Kubernetes version to use for the AKS cluster"
+  type        = string
+  default     = "1.28.3"
 }
