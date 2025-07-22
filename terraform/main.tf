@@ -26,3 +26,12 @@ module "networks" {
   nsg_name            = var.nsg_name
   nsg_rules           = var.nsg_rules
 }
+
+#------------------------------- LB BLOCK ------------------------------------------
+module "loadbalancer" {
+  source              = "./modules/loadbalancer"
+  public_ip_name      = "easyshop-lb-ip"
+  lb_name             = "easyshop-lb"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+}

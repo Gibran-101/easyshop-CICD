@@ -76,3 +76,14 @@ variable "nsg_rules" {
     destination_address_prefix = string
   }))
 }
+
+#------------------------------- LB VARIABLES ------------------------------------------
+variable "public_ip_name" {
+  type        = string
+  description = "Name of the public IP for LB"
+}
+
+variable "lb_name" {
+  type        = string
+  description = "Name of the Load Balancer"
+}
