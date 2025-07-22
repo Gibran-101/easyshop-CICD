@@ -1,3 +1,4 @@
+# -------------------------------- ACR BLOCK -----------------------------------
 module "acr" {
   source              = "./modules/acr"
   acr_name            = var.acr_name
@@ -5,6 +6,7 @@ module "acr" {
   location            = var.location
 }
 
+# -------------------------------- AKS BLOCK -----------------------------------
 module "aks" {
   source              = "./modules/aks"
   aks_cluster_name    = var.aks_cluster_name
