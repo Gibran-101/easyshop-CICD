@@ -87,3 +87,15 @@ variable "lb_name" {
   type        = string
   description = "Name of the Load Balancer"
 }
+
+#--------------------------------------DNS_ZONE VARIABLES--------------------------------------------
+variable "domain_name" {
+  type        = string
+  description = "DNS zone domain name (e.g., mydomain.com)"
+}
+
+variable "record_name" {
+  type        = string
+  description = "Subdomain (e.g., www, app)"
+}
+
