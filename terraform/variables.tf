@@ -8,11 +8,6 @@ variable "location" {
   type        = string
 }
 
-variable "acr_name" {
-  description = "Name of the Azure Container Registry"
-  type        = string
-}
-
 variable "aks_cluster_name" {
   description = "Name of the AKS cluster"
   type        = string
@@ -34,6 +29,25 @@ variable "kubernetes_version" {
   description = "Kubernetes version to use for the AKS cluster"
   type        = string
   default     = "1.28.3"
+}
+
+#-------------------------------------- ACR VARIABLES HERE ------------------------------------------------
+variable "acr_name" {
+  description = "Name of the Azure Container Registry"
+  type        = string
+}
+
+variable "github_token" {
+  description = "GitHub Personal Access Token"
+  sensitive   = true
+}
+
+variable "github_owner" {
+  description = "GitHub account/org name"
+}
+
+variable "github_repo" {
+  description = "GitHub repository name"
 }
 
 # -------------------------------- NETWORK VARIABLES HERE -----------------------------------

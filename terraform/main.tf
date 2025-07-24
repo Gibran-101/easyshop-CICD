@@ -6,6 +6,12 @@ module "acr" {
   location            = var.location
 }
 
+resource "github_actions_secret" "acr_login_server" {
+  repository      = var.github_repo
+  secret_name     = "ACR_LOGIN_SERVER"
+  plaintext_value = module.acr.acr_login_server
+}
+
 # -------------------------------- AKS BLOCK -----------------------------------
 module "aks" {
   source              = "./modules/aks"
