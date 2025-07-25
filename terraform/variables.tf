@@ -102,6 +102,10 @@ variable "lb_name" {
   description = "Name of the Load Balancer"
 }
 
+variable "argocd_server_ip" {
+  type = string
+}
+
 #--------------------------------------DNS_ZONE VARIABLES--------------------------------------------
 variable "domain_name" {
   type        = string

@@ -2,6 +2,7 @@ output "acr_login_server" {
   value = module.acr.acr_login_server
 }
 
+#------------------------------------- AKS OUTPUTS HERE ---------------------------------------
 output "aks_name" {
   value = module.aks.aks_name
 }
@@ -9,6 +10,10 @@ output "aks_name" {
 output "kube_config" {
   value     = module.aks.kube_config
   sensitive = true
+}
+
+output "argocd_server_ip" {
+  value = module.aks.argocd_server_ip
 }
 
 # -------------------------------- NETWORK OUTPUTS HERE -----------------------------------

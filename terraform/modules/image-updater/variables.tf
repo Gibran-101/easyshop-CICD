@@ -18,3 +18,4 @@ variable "github_username" {}
 
 variable "github_token" {}
 
+variable "argocd_server_ip" {}
