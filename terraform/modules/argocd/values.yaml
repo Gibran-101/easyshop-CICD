@@ -1,0 +1,25 @@
+image:
+  repository: quay.io/argocd/image-updater
+  tag: v0.12.0
+
+argocd:
+  serverAddress: https://argocd.mycustomdomain.com
+
+registries:
+  - name: Azure ACR
+    prefix: acr
+    type: acr
+    url: <ACR_LOGIN_SERVER>
+    credentials:
+      username: <ACR_USERNAME>
+      password: <ACR_PASSWORD>
+
+logLevel: info
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi

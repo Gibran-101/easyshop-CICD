@@ -113,3 +113,14 @@ variable "record_name" {
   description = "Subdomain (e.g., www, app)"
 }
 
+#--------------------------------- ARGOCD VARIABLES ----------------------------------------------------
+variable "name" {
+  description = "The name of the ArgoCD module or deployment"
+  type        = string
+}
+
+variable "kubeconfig" {
+  description = "Kubeconfig to connect to AKS"
+  type        = string
+}
+
