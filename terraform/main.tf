@@ -47,8 +47,8 @@ module "loadbalancer" {
 #---------------------------------DNS_ZONE BLOCK----------------------------------------------
 module "dns_zone" {
   source              = "./modules/dns_zone"
-  domain_name         = module.dns_zone.domain_name
-  record_name         = module.dns_zone.record_name
+  domain_name         = var.domain_name
+  record_name         = var.record_name
   resource_group_name = var.resource_group_name
   lb_ip_address       = module.loadbalancer.lb_public_ip_id
 }
