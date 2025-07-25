@@ -1,0 +1,14 @@
+config:
+  registries:
+    - name: acr
+      api_url: https://<your-acr-name>.azurecr.io
+      prefix: <your-acr-name>.azurecr.io
+      credentials:
+        username: <your-client-id>
+        password: <your-client-secret>
+
+  git:
+    credentials:
+      - url: https://github.com/<your-org>/<your-repo>
+        username: your-username
+        password: ${ARGOCD_GIT_TOKEN}

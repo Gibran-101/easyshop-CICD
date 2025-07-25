@@ -47,8 +47,28 @@ module "loadbalancer" {
 #---------------------------------DNS_ZONE BLOCK----------------------------------------------
 module "dns_zone" {
   source              = "./modules/dns_zone"
-  domain_name         = "mydomain.com"
-  record_name         = "app"
+  domain_name         = module.dns_zone.domain_name
+  record_name         = module.dns_zone.record_name
   resource_group_name = var.resource_group_name
   lb_ip_address       = module.loadbalancer.lb_public_ip_id
+}
+
+# -------------------------------- ARGOCD BLOCK -----------------------------------
+module "argocd" {
+  source              = "./modules/argocd"
+  name                = "argocd" # or any logical value you want
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  kubeconfig          = module.aks.kube_config
+}
+
+
+# ----------------------------- ARGOCD IMAGE UPDATER BLOCK -----------------------------
+module "image-updater" {
+  source              = "./modules/image-updater"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  acr_name            = module.acr.acr_name
+  acr_login_server    = module.acr.acr_login_server
+  github_repo         = var.github_repo
 }
