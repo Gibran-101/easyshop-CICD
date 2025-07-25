@@ -26,9 +26,6 @@ output "subnet_ids" {
 }
 
 #-------------------- ACR VARS FOR ARGOCD IMAGE UPDATER --------------------------
-output "acr_login_server" {
-  value = module.acr.acr_login_server
-}
 output "acr_username" {
   value = module.acr.acr_admin_username
 }

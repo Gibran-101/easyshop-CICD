@@ -102,9 +102,9 @@ variable "lb_name" {
   description = "Name of the Load Balancer"
 }
 
-variable "argocd_server_ip" {
-  type = string
-}
+# variable "argocd_server_ip" {
+#   type = string
+# }
 
 #--------------------------------------DNS_ZONE VARIABLES--------------------------------------------
 variable "domain_name" {
@@ -123,16 +123,12 @@ variable "name" {
   type        = string
 }
 
-variable "kubeconfig" {
-  description = "Kubeconfig to connect to AKS"
-  type        = string
-}
+# variable "kubeconfig" {
+#   description = "Kubeconfig to connect to AKS"
+#   type        = string
+# }
 
 #--------------------------IMAGE UPDATER VARIABLES ---------------------------------
-variable "github_owner" {
-  description = "GitHub organization or user name"
-  type        = string
-}
 
 variable "github_username" {
   description = "GitHub username used for ArgoCD image updater"
