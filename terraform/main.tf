@@ -73,10 +73,12 @@ module "image-updater" {
   acr_username     = module.acr.acr_admin_username
   acr_password     = module.acr.acr_admin_password
 
-  github_owner     = var.github_owner
-  github_repo      = var.github_repo
-  github_username  = var.github_username
-  github_token     = var.github_token
+  github_owner    = var.github_owner
+  github_repo     = var.github_repo
+  github_username = var.github_username
+  github_token    = var.github_token
+
+  argocd_server_ip = module.loadbalancer.argocd_server_ip
 }
 
 
