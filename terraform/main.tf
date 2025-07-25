@@ -63,12 +63,20 @@ module "argocd" {
 }
 
 
-# ----------------------------- ARGOCD IMAGE UPDATER BLOCK -----------------------------
 module "image-updater" {
   source              = "./modules/image-updater"
   resource_group_name = var.resource_group_name
   location            = var.location
-  acr_name            = module.acr.acr_name
-  acr_login_server    = module.acr.acr_login_server
-  github_repo         = var.github_repo
+
+  acr_name         = module.acr.acr_name
+  acr_login_server = module.acr.acr_login_server
+  acr_username     = module.acr.acr_admin_username
+  acr_password     = module.acr.acr_admin_password
+
+  github_owner     = var.github_owner
+  github_repo      = var.github_repo
+  github_username  = var.github_username
+  github_token     = var.github_token
 }
+
+
