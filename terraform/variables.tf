@@ -124,3 +124,14 @@ variable "kubeconfig" {
   type        = string
 }
 
+#--------------------------IMAGE UPDATER VARIABLES ---------------------------------
+variable "github_owner" {
+  description = "GitHub organization or user name"
+  type        = string
+}
+
+variable "github_username" {
+  description = "GitHub username used for ArgoCD image updater"
+  type        = string
+}
+
