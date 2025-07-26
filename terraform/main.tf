@@ -67,6 +67,7 @@ module "image-updater" {
   source              = "./modules/image-updater"
   resource_group_name = var.resource_group_name
   location            = var.location
+  kube_config = module.aks.kube_config
 
   acr_name         = module.acr.acr_name
   acr_login_server = module.acr.acr_login_server
