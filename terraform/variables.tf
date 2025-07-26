@@ -123,10 +123,11 @@ variable "name" {
   type        = string
 }
 
-# variable "kubeconfig" {
-#   description = "Kubeconfig to connect to AKS"
-#   type        = string
-# }
+variable "kubeconfig" {
+  description = "Kubeconfig to connect to AKS"
+  type        = string
+  sensitive = true
+}
 
 #--------------------------IMAGE UPDATER VARIABLES ---------------------------------
 
