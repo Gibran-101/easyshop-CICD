@@ -14,13 +14,15 @@ resource "github_actions_secret" "acr_login_server" {
 
 # -------------------------------- AKS BLOCK -----------------------------------
 module "aks" {
-  source              = "./modules/aks"
-  aks_cluster_name    = var.aks_cluster_name
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  node_count          = var.node_count
-  vm_size             = var.vm_size
-  kubernetes_version  = var.kubernetes_version
+  source                   = "./modules/aks"
+  aks_cluster_name         = var.aks_cluster_name
+  resource_group_name      = var.resource_group_name
+  location                 = var.location
+  node_count               = var.node_count
+  vm_size                  = var.vm_size
+  kubernetes_version       = var.kubernetes_version
+  kubelet_identity_object_id = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  acr_id                   = azurerm_container_registry.acr.id
 }
 
 # -------------------------------- NETWORK BLOCK -----------------------------------

@@ -31,6 +31,17 @@ variable "kubernetes_version" {
   default     = "1.28.3"
 }
 
+variable "kubelet_identity_object_id" {
+  description = "Managed identity object ID for kubelet"
+  type        = string
+}
+
+variable "acr_id" {
+  description = "Azure Container Registry ID"
+  type        = string
+}
+
+
 #-------------------------------------- ACR VARIABLES HERE ------------------------------------------------
 variable "acr_name" {
   description = "Name of the Azure Container Registry"
