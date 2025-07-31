@@ -77,4 +77,12 @@ jobs:
           kubectl scale deployment/${{ env.DEPLOYMENT_GREEN }} --replicas=0 -n ${{ env.K8S_NAMESPACE }}
         fi
 
+        on:
+          workflow_dispatch:
+          workflow_run:
+            workflows: ["infra.yml"]
+            types:
+              - completed
+
+
         EOF
