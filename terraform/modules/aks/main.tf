@@ -16,10 +16,3 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   kubernetes_version = var.kubernetes_version
 }
-
-resource "azurerm_role_assignment" "aks_acr_pull" {
-  principal_id         = module.aks.kubelet_identity_object_id
-  role_definition_name = "AcrPull"
-  scope                = module.acr.acr_id
-}
-

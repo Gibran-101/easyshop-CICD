@@ -31,15 +31,15 @@ variable "kubernetes_version" {
   default     = "1.28.3"
 }
 
-variable "kubelet_identity_object_id" {
-  description = "Managed identity object ID for kubelet"
-  type        = string
-}
+# variable "kubelet_identity_object_id" {
+#   description = "Managed identity object ID for kubelet"
+#   type        = string
+# }
 
-variable "acr_id" {
-  description = "Azure Container Registry ID"
-  type        = string
-}
+# variable "acr_id" {
+#   description = "Azure Container Registry ID"
+#   type        = string
+# }
 
 
 #-------------------------------------- ACR VARIABLES HERE ------------------------------------------------
@@ -113,10 +113,6 @@ variable "lb_name" {
   description = "Name of the Load Balancer"
 }
 
-# variable "argocd_server_ip" {
-#   type = string
-# }
-
 #--------------------------------------DNS_ZONE VARIABLES--------------------------------------------
 variable "domain_name" {
   type        = string
@@ -134,11 +130,11 @@ variable "name" {
   type        = string
 }
 
-variable "kubeconfig" {
-  description = "Kubeconfig to connect to AKS"
-  type        = string
-  sensitive = true
-}
+# variable "kubeconfig" {
+#   description = "Kubeconfig to connect to AKS"
+#   type        = string
+#   sensitive   = true
+# }
 
 #--------------------------IMAGE UPDATER VARIABLES ---------------------------------
 

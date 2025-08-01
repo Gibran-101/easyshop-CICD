@@ -12,9 +12,9 @@ output "kube_config" {
   sensitive = true
 }
 
-output "argocd_server_ip" {
-  value = module.aks.argocd_server_ip
-}
+# output "argocd_server_ip" {
+#   value = module.aks.argocd_server_ip
+# }
 
 # -------------------------------- NETWORK OUTPUTS HERE -----------------------------------
 output "vnet_id" {
@@ -30,6 +30,7 @@ output "acr_username" {
   value = module.acr.acr_admin_username
 }
 output "acr_password" {
-  value = module.acr.acr_admin_password
+  sensitive = true
+  value     = module.acr.acr_admin_password
 }
 
