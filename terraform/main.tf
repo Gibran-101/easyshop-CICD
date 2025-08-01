@@ -14,16 +14,25 @@ resource "github_actions_secret" "acr_login_server" {
 
 # -------------------------------- AKS BLOCK -----------------------------------
 module "aks" {
-  source                   = "./modules/aks"
-  aks_cluster_name         = var.aks_cluster_name
-  resource_group_name      = var.resource_group_name
-  location                 = var.location
-  node_count               = var.node_count
-  vm_size                  = var.vm_size
-  kubernetes_version       = var.kubernetes_version
-  kubelet_identity_object_id = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
-  acr_id                   = azurerm_container_registry.acr.id
+  source              = "./modules/aks"
+  aks_cluster_name    = var.aks_cluster_name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  node_count          = var.node_count
+  vm_size             = var.vm_size
+  kubernetes_version  = var.kubernetes_version
+  # acr_id = modules.acr.acr_id
+  # kubeconfig                = modules.aks.kubeconfig
 }
+
+# kubelet_identity_object_id = modules.aks.kubelet_identity_object_id
+
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  principal_id         = module.aks.kubelet_identity_object_id
+  role_definition_name = "AcrPull"
+  scope                = module.acr.acr_id
+}
+
 
 # -------------------------------- NETWORK BLOCK -----------------------------------
 module "networks" {
@@ -37,6 +46,15 @@ module "networks" {
   nsg_rules           = var.nsg_rules
 }
 
+# -------------------------------- ARGOCD BLOCK -----------------------------------
+module "argocd" {
+  source              = "./modules/argocd"
+  name                = "argocd"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  kubeconfig          = module.aks.kube_config
+}
+
 #------------------------------- LB BLOCK ------------------------------------------
 module "loadbalancer" {
   source              = "./modules/loadbalancer"
@@ -44,6 +62,8 @@ module "loadbalancer" {
   lb_name             = "easyshop-lb"
   location            = var.location
   resource_group_name = var.resource_group_name
+  argocd_server_url   = module.argocd.argocd_server_url
+  depends_on          = [module.argocd]
 }
 
 #---------------------------------DNS_ZONE BLOCK----------------------------------------------
@@ -55,21 +75,11 @@ module "dns_zone" {
   lb_ip_address       = module.loadbalancer.lb_public_ip_id
 }
 
-# -------------------------------- ARGOCD BLOCK -----------------------------------
-module "argocd" {
-  source              = "./modules/argocd"
-  name                = "argocd" # or any logical value you want
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  kubeconfig          = module.aks.kube_config
-}
-
-
 module "image-updater" {
   source              = "./modules/image-updater"
   resource_group_name = var.resource_group_name
   location            = var.location
-  kube_config = module.aks.kube_config
+  kube_config         = module.aks.kube_config
 
   acr_name         = module.acr.acr_name
   acr_login_server = module.acr.acr_login_server
