@@ -1,12 +1,23 @@
 # Global Variables
 variable "resource_group_name" {}
-variable "location" {}
+variable "location" {
+  description = "Azure region to deploy resources."
+  type        = string
+}
 variable "tags" {
   type = map(string)
 }
 
 # Networking
-variable "vnet_name" {}
+variable "project_name" {
+  description = "Name of the project."
+  type        = string
+}
+
+variable "vnet_name" {
+  description = "Name of the VNet"
+  type = string
+}
 
 # ACR
 variable "acr_name" {}
