@@ -15,5 +15,8 @@ variable "secret_values" {
 }
 variable "key_vault_name" {}
 
-variable "tenant_id" {}
+variable "tenant_id" {
+  description = "This is the ID for tenant"
+  type = string
+}
 

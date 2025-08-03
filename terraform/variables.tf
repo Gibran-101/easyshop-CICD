@@ -46,18 +46,6 @@ variable "admin_object_id" {
   description = "Azure AD Object ID of the admin user/service principal that needs access to Key Vault"
 }
 
-variable "client_id" {
-  type = string
-}
-
-variable "tenant_id" {
-  type = string
-}
-
-variable "subscription_id" {
-  type = string
-}
-
 variable "key_vault_name" {
   description = "Name of the Azure Key Vault"
   type        = string

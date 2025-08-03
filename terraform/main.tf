@@ -95,12 +95,37 @@ module "vault" {
   resource_group_name = var.resource_group_name
   admin_object_id     = var.admin_object_id
   key_vault_name      = var.key_vault_name
-  tenant_id           = var.tenant_id
+  tenant_id           = data.azurerm_key_vault_secret.tenant_id.value
 
   secret_values = {
-    "client-id"       = var.client_id
-    "tenant-id"       = var.tenant_id
-    "subscription-id" = var.subscription_id
+    "client-id"       = data.azurerm_key_vault_secret.client_id.value
+    "tenant-id"       = data.azurerm_key_vault_secret.tenant_id.value
+    "subscription-id" = data.azurerm_key_vault_secret.subscription_id.value
+    "client-secret" = data.azurerm_key_vault_secret.client_secret.value
   }
 }
 
+data "azurerm_key_vault" "gvault" {
+  name                = "gVault-01"
+  resource_group_name = "tfstate-rg"
+}
+
+data "azurerm_key_vault_secret" "client_id" {
+  name         = "client-id"
+  key_vault_id = data.azurerm_key_vault.gvault.id
+}
+
+data "azurerm_key_vault_secret" "client_secret" {
+  name         = "client-secret"
+  key_vault_id = data.azurerm_key_vault.gvault.id
+}
+
+data "azurerm_key_vault_secret" "tenant_id" {
+  name         = "tenant-id"
+  key_vault_id = data.azurerm_key_vault.gvault.id
+}
+
+data "azurerm_key_vault_secret" "subscription_id" {
+  name         = "subscription-id"
+  key_vault_id = data.azurerm_key_vault.gvault.id
+}
