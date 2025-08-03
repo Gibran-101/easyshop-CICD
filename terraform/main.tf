@@ -86,13 +86,21 @@ module "networking" {
 #   depends_on = [module.aks]
 # }
 
-# # =======================
-# # Module: vault (HashiCorp Vault)
-# # =======================
-# module "vault" {
-#   source = "./modules/vault"
-#   aks_kube_config      = module.aks.kube_config
-#   vault_namespace      = var.vault_namespace
-#   tags                 = var.tags
-#   depends_on = [module.aks]
-# }
+# =======================
+# Module: vault (HashiCorp Vault)
+# =======================
+module "vault" {
+  source              = "./modules/vault"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  admin_object_id     = var.admin_object_id
+  key_vault_name      = var.key_vault_name
+  tenant_id           = var.tenant_id
+
+  secret_values = {
+    "client-id"       = var.client_id
+    "tenant-id"       = var.tenant_id
+    "subscription-id" = var.subscription_id
+  }
+}
+

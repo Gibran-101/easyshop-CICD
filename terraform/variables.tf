@@ -1,5 +1,8 @@
 # Global Variables
-variable "resource_group_name" {}
+variable "resource_group_name" {
+  description = "The resource group name"
+  type        = string
+}
 variable "location" {
   description = "Azure region to deploy resources."
   type        = string
@@ -16,7 +19,7 @@ variable "project_name" {
 
 variable "vnet_name" {
   description = "Name of the VNet"
-  type = string
+  type        = string
 }
 
 # ACR
@@ -38,4 +41,24 @@ variable "github_repo_url" {}
 variable "observability_namespace" {}
 
 # Vault
-variable "vault_namespace" {}
+variable "admin_object_id" {
+  type        = string
+  description = "Azure AD Object ID of the admin user/service principal that needs access to Key Vault"
+}
+
+variable "client_id" {
+  type = string
+}
+
+variable "tenant_id" {
+  type = string
+}
+
+variable "subscription_id" {
+  type = string
+}
+
+variable "key_vault_name" {
+  description = "Name of the Azure Key Vault"
+  type        = string
+}
