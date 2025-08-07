@@ -1,52 +1,80 @@
 # Global Variables
-variable "resource_group_name" {
-  description = "The resource group name"
-  type        = string
-}
-variable "location" {
-  description = "Azure region to deploy resources."
-  type        = string
-}
-variable "tags" {
-  type = map(string)
-}
-
-# Networking
 variable "project_name" {
-  description = "Name of the project."
+  description = "Name of the project"
+  type        = string
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.project_name))
+    error_message = "Project name must contain only lowercase letters, numbers, and hyphens."
+  }
+}
+
+variable "resource_group_name" {
+  description = "The resource group name (if using existing)"
+  type        = string
+  default     = ""
+}
+
+variable "location" {
+  description = "Azure region to deploy resources"
+  type        = string
+  default     = "East US"
+}
+
+variable "tags" {
+  description = "Tags to apply to all resources"
+  type        = map(string)
+  default = {
+    Project   = "EasyShop"
+    ManagedBy = "Terraform"
+  }
+}
+
+# ACR Variables
+variable "acr_name" {
+  description = "Azure Container Registry name (must be globally unique)"
   type        = string
 }
 
-variable "vnet_name" {
-  description = "Name of the VNet"
+# AKS Variables
+variable "aks_cluster_name" {
+  description = "AKS cluster name"
   type        = string
 }
 
-# ACR
-variable "acr_name" {}
+# DNS Variables
+variable "dns_zone_name" {
+  description = "Azure DNS zone name"
+  type        = string
+}
 
-# AKS
-variable "aks_cluster_name" {}
+# ArgoCD Variables
+variable "argocd_namespace" {
+  description = "Kubernetes namespace for ArgoCD"
+  type        = string
+  default     = "argocd"
+}
 
-# DNS
-variable "dns_zone_name" {}
+variable "github_repo_url" {
+  description = "GitHub repository URL for ArgoCD"
+  type        = string
+}
 
-# ArgoCD
-variable "argocd_namespace" {}
+# Observability Variables
+variable "observability_namespace" {
+  description = "Kubernetes namespace for observability stack"
+  type        = string
+  default     = "monitoring"
+}
 
-# ArgoCD Image Updater
-variable "github_repo_url" {}
-
-# Observability
-variable "observability_namespace" {}
-
-# Vault
+# Vault Variables
 variable "admin_object_id" {
+  description = "Azure AD Object ID of additional admin user/service principal (optional)"
   type        = string
-  description = "Azure AD Object ID of the admin user/service principal that needs access to Key Vault"
+  default     = ""
 }
 
-variable "key_vault_name" {
-  description = "Name of the Azure Key Vault"
-  type        = string
+variable "allowed_ips" {
+  description = "List of IP addresses allowed to access Key Vault (optional)"
+  type        = list(string)
+  default     = []
 }

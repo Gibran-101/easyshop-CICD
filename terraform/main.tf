@@ -1,3 +1,6 @@
+# Data source to get current Azure client configuration
+data "azurerm_client_config" "current" {}
+
 # =======================
 # Module: networking
 # =======================
@@ -5,127 +8,142 @@ module "networking" {
   source       = "./modules/networking"
   project_name = var.project_name
   location     = var.location
+  tags         = var.tags
 }
 
 # =======================
-# Module: acr (Container Registry)
+# Module: Application Key Vault (for storing app secrets)
 # =======================
+module "app_keyvault" {
+  source              = "./modules/vault"
+  key_vault_name      = "${var.project_name}-kv"
+  location            = var.location
+  resource_group_name = module.networking.resource_group_name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  admin_object_id     = coalesce(var.admin_object_id, data.azurerm_client_config.current.object_id)
+  
+  # Simple network ACLs for personal project
+  network_acls = {
+    default_action = "Allow"  # Allow all for personal project
+    bypass         = "AzureServices"
+    ip_rules       = var.allowed_ips  # Add your home IP if you want
+    virtual_network_subnet_ids = [module.networking.aks_subnet_id]
+  }
+  
+  tags = var.tags
+  depends_on = [module.networking]
+}
+
+# # =======================
+# # Module: ACR (Container Registry)
+# # =======================
 # module "acr" {
-#   source = "./modules/acr"
+#   source              = "./modules/acr"
 #   acr_name            = var.acr_name
-#   resource_group_name = var.resource_group_name
+#   resource_group_name = module.networking.resource_group_name
 #   location            = var.location
 #   tags                = var.tags
+#   depends_on          = [module.networking]
+# }
+
+# # Store ACR credentials in Application Key Vault
+# resource "azurerm_key_vault_secret" "acr_admin_username" {
+#   name         = "acr-admin-username"
+#   value        = module.acr.admin_username
+#   key_vault_id = module.app_keyvault.key_vault_id
+#   depends_on   = [module.app_keyvault, module.acr]
+# }
+
+# resource "azurerm_key_vault_secret" "acr_admin_password" {
+#   name         = "acr-admin-password"
+#   value        = module.acr.admin_password
+#   key_vault_id = module.app_keyvault.key_vault_id
+#   depends_on   = [module.app_keyvault, module.acr]
 # }
 
 # # =======================
-# # Module: aks (Kubernetes Cluster)
+# # Module: AKS (Kubernetes Cluster)
 # # =======================
 # module "aks" {
-#   source = "./modules/aks"
+#   source              = "./modules/aks"
 #   aks_cluster_name    = var.aks_cluster_name
-#   resource_group_name = var.resource_group_name
+#   resource_group_name = module.networking.resource_group_name
 #   location            = var.location
-#   vnet_subnet_id      = module.networking.subnet_id
+#   vnet_subnet_id      = module.networking.aks_subnet_id
 #   acr_id              = module.acr.acr_id
 #   tags                = var.tags
-#   depends_on = [module.networking, module.acr]
+#   depends_on          = [module.networking, module.acr]
+# }
+
+# # Store AKS credentials in Application Key Vault
+# resource "azurerm_key_vault_secret" "aks_host" {
+#   name         = "aks-host"
+#   value        = module.aks.kube_config.0.host
+#   key_vault_id = module.app_keyvault.key_vault_id
+#   depends_on   = [module.app_keyvault, module.aks]
 # }
 
 # # =======================
-# # Module: dns (Azure DNS)
+# # Module: DNS (Azure DNS)
 # # =======================
 # module "dns" {
-#   source = "./modules/dns"
+#   source              = "./modules/dns"
 #   dns_zone_name       = var.dns_zone_name
-#   resource_group_name = var.resource_group_name
+#   resource_group_name = module.networking.resource_group_name
 #   tags                = var.tags
+#   depends_on          = [module.networking]
 # }
 
 # # =======================
-# # Module: loadbalancer
+# # Module: Load Balancer
 # # =======================
 # module "loadbalancer" {
-#   source = "./modules/loadbalancer"
-#   aks_cluster_name    = var.aks_cluster_name
-#   resource_group_name = var.resource_group_name
+#   source              = "./modules/loadbalancer"
+#   resource_group_name = module.networking.resource_group_name
+#   location            = var.location
 #   tags                = var.tags
+#   depends_on          = [module.aks]
 # }
 
 # # =======================
-# # Module: argocd
+# # Module: ArgoCD
 # # =======================
 # module "argocd" {
-#   source = "./modules/argocd"
-#   aks_kube_config     = module.aks.kube_config
-#   argocd_namespace    = var.argocd_namespace
-#   tags                = var.tags
-#   depends_on = [module.aks]
+#   source           = "./modules/argocd"
+#   kube_config      = module.aks.kube_config
+#   argocd_namespace = var.argocd_namespace
+#   tags             = var.tags
+#   depends_on       = [module.aks]
+# }
+
+# # Store ArgoCD password in Application Key Vault
+# resource "azurerm_key_vault_secret" "argocd_admin_password" {
+#   name         = "argocd-admin-password"
+#   value        = module.argocd.admin_password
+#   key_vault_id = module.app_keyvault.key_vault_id
+#   depends_on   = [module.app_keyvault, module.argocd]
 # }
 
 # # =======================
-# # Module: argocd-image-updater
+# # Module: ArgoCD Image Updater
 # # =======================
 # module "argocd_image_updater" {
-#   source = "./modules/argocd-image-updater"
-#   acr_login_server     = module.acr.acr_login_server
-#   argocd_namespace     = var.argocd_namespace
-#   github_repo_url      = var.github_repo_url
-#   tags                 = var.tags
-#   depends_on = [module.argocd, module.acr]
+#   source           = "./modules/argocd-image-updater"
+#   acr_login_server = module.acr.acr_login_server
+#   argocd_namespace = var.argocd_namespace
+#   github_repo_url  = var.github_repo_url
+#   kube_config      = module.aks.kube_config
+#   tags             = var.tags
+#   depends_on       = [module.argocd, module.acr]
 # }
 
 # # =======================
-# # Module: observability (Grafana, Prometheus, Loki)
+# # Module: Observability (Grafana, Prometheus, Loki)
 # # =======================
 # module "observability" {
-#   source = "./modules/observability"
-#   aks_kube_config      = module.aks.kube_config
-#   observability_ns     = var.observability_namespace
-#   tags                 = var.tags
-#   depends_on = [module.aks]
+#   source           = "./modules/observability"
+#   kube_config      = module.aks.kube_config
+#   observability_ns = var.observability_namespace
+#   tags             = var.tags
+#   depends_on       = [module.aks]
 # }
-
-# =======================
-# Module: vault (HashiCorp Vault)
-# =======================
-module "vault" {
-  source              = "./modules/vault"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  admin_object_id     = var.admin_object_id
-  key_vault_name      = var.key_vault_name
-  tenant_id           = data.azurerm_key_vault_secret.tenant_id.value
-
-  secret_values = {
-    "client-id"       = data.azurerm_key_vault_secret.client_id.value
-    "tenant-id"       = data.azurerm_key_vault_secret.tenant_id.value
-    "subscription-id" = data.azurerm_key_vault_secret.subscription_id.value
-    "client-secret" = data.azurerm_key_vault_secret.client_secret.value
-  }
-}
-
-data "azurerm_key_vault" "gvault" {
-  name                = "gVault-01"
-  resource_group_name = "tfstate-rg"
-}
-
-data "azurerm_key_vault_secret" "client_id" {
-  name         = "client-id"
-  key_vault_id = data.azurerm_key_vault.gvault.id
-}
-
-data "azurerm_key_vault_secret" "client_secret" {
-  name         = "client-secret"
-  key_vault_id = data.azurerm_key_vault.gvault.id
-}
-
-data "azurerm_key_vault_secret" "tenant_id" {
-  name         = "tenant-id"
-  key_vault_id = data.azurerm_key_vault.gvault.id
-}
-
-data "azurerm_key_vault_secret" "subscription_id" {
-  name         = "subscription-id"
-  key_vault_id = data.azurerm_key_vault.gvault.id
-}
