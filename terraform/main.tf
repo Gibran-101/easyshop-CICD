@@ -37,29 +37,29 @@ module "app_keyvault" {
 # # =======================
 # Module: ACR (Container Registry)
 # =======================
-# module "acr" {
-#   source              = "./modules/acr"
-#   acr_name            = var.acr_name
-#   resource_group_name = module.networking.resource_group_name
-#   location            = var.location
-#   tags                = var.tags
-#   depends_on          = [module.networking]
-# }
+module "acr" {
+  source              = "./modules/acr"
+  acr_name            = var.acr_name
+  resource_group_name = module.networking.resource_group_name
+  location            = var.location
+  tags                = var.tags
+  depends_on          = [module.networking]
+}
 
-# # Store ACR credentials in Application Key Vault
-# resource "azurerm_key_vault_secret" "acr_admin_username" {
-#   name         = "acr-admin-username"
-#   value        = module.acr.admin_username
-#   key_vault_id = module.app_keyvault.key_vault_id
-#   depends_on   = [module.app_keyvault, module.acr]
-# }
+# Store ACR credentials in Application Key Vault
+resource "azurerm_key_vault_secret" "acr_admin_username" {
+  name         = "acr-admin-username"
+  value        = module.acr.admin_username
+  key_vault_id = module.app_keyvault.key_vault_id
+  depends_on   = [module.app_keyvault, module.acr]
+}
 
-# resource "azurerm_key_vault_secret" "acr_admin_password" {
-#   name         = "acr-admin-password"
-#   value        = module.acr.admin_password
-#   key_vault_id = module.app_keyvault.key_vault_id
-#   depends_on   = [module.app_keyvault, module.acr]
-# }
+resource "azurerm_key_vault_secret" "acr_admin_password" {
+  name         = "acr-admin-password"
+  value        = module.acr.admin_password
+  key_vault_id = module.app_keyvault.key_vault_id
+  depends_on   = [module.app_keyvault, module.acr]
+}
 
 # =======================
 # Module: AKS (Kubernetes Cluster)
