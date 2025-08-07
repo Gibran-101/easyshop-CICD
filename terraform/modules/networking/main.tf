@@ -20,7 +20,7 @@ resource "azurerm_subnet" "aks_subnet" {
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = ["10.0.1.0/24"]
-  
+
   # Service endpoints for private connectivity to Azure services
   service_endpoints = [
     "Microsoft.KeyVault",
@@ -32,7 +32,7 @@ resource "azurerm_subnet" "aks_subnet" {
 
 # Create Bastion subnet (optional - for secure VM access if needed later)
 resource "azurerm_subnet" "bastion_subnet" {
-  name                 = "AzureBastionSubnet"  # Must be exactly this name
+  name                 = "AzureBastionSubnet" # Must be exactly this name
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = ["10.0.2.0/24"]

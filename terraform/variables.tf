@@ -78,3 +78,26 @@ variable "allowed_ips" {
   type        = list(string)
   default     = []
 }
+
+# ========================================
+# UPDATES NEEDED IN: variables.tf (root module)
+# ========================================
+
+# Optional: Add these if you want to customize from tfvars
+variable "aks_node_count" {
+  description = "Number of AKS nodes"
+  type        = number
+  default     = 1 # Default for personal project
+}
+
+variable "aks_vm_size" {
+  description = "Size of AKS node VMs"
+  type        = string
+  default     = "Standard_B2s" # Cheaper default
+}
+
+variable "aks_enable_auto_scaling" {
+  description = "Enable AKS auto-scaling"
+  type        = bool
+  default     = false
+}

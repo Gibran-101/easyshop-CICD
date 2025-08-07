@@ -21,22 +21,22 @@ module "app_keyvault" {
   resource_group_name = module.networking.resource_group_name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   admin_object_id     = coalesce(var.admin_object_id, data.azurerm_client_config.current.object_id)
-  
+
   # Simple network ACLs for personal project
   network_acls = {
-    default_action = "Allow"  # Allow all for personal project
-    bypass         = "AzureServices"
-    ip_rules       = var.allowed_ips  # Add your home IP if you want
+    default_action             = "Allow" # Allow all for personal project
+    bypass                     = "AzureServices"
+    ip_rules                   = var.allowed_ips # Add your home IP if you want
     virtual_network_subnet_ids = [module.networking.aks_subnet_id]
   }
-  
-  tags = var.tags
+
+  tags       = var.tags
   depends_on = [module.networking]
 }
 
 # # =======================
-# # Module: ACR (Container Registry)
-# # =======================
+# Module: ACR (Container Registry)
+# =======================
 # module "acr" {
 #   source              = "./modules/acr"
 #   acr_name            = var.acr_name
@@ -61,27 +61,25 @@ module "app_keyvault" {
 #   depends_on   = [module.app_keyvault, module.acr]
 # }
 
-# # =======================
-# # Module: AKS (Kubernetes Cluster)
-# # =======================
-# module "aks" {
-#   source              = "./modules/aks"
-#   aks_cluster_name    = var.aks_cluster_name
-#   resource_group_name = module.networking.resource_group_name
-#   location            = var.location
-#   vnet_subnet_id      = module.networking.aks_subnet_id
-#   acr_id              = module.acr.acr_id
-#   tags                = var.tags
-#   depends_on          = [module.networking, module.acr]
-# }
+# =======================
+# Module: AKS (Kubernetes Cluster)
+# =======================
+module "aks" {
+  source              = "./modules/aks"
+  aks_cluster_name    = var.aks_cluster_name
+  resource_group_name = module.networking.resource_group_name
+  location            = var.location
+  vnet_subnet_id      = module.networking.aks_subnet_id
+  acr_id              = module.acr.acr_id
+  key_vault_id        = module.app_keyvault.key_vault_id
+  node_count          = 2
+  vm_size             = "Standard_B2s"
+  enable_auto_scaling = false
 
-# # Store AKS credentials in Application Key Vault
-# resource "azurerm_key_vault_secret" "aks_host" {
-#   name         = "aks-host"
-#   value        = module.aks.kube_config.0.host
-#   key_vault_id = module.app_keyvault.key_vault_id
-#   depends_on   = [module.app_keyvault, module.aks]
-# }
+
+  tags       = var.tags
+  depends_on = [module.networking, module.app_keyvault] #remember to add acr here
+}
 
 # # =======================
 # # Module: DNS (Azure DNS)
