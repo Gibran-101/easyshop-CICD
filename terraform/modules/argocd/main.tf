@@ -10,30 +10,30 @@ resource "helm_release" "argocd" {
   name       = "argocd"
   repository = "https://argoproj.github.io/argo-helm"
   chart      = "argo-cd"
-  version    = "5.51.4"  # Latest stable version
+  version    = "5.51.4" # Latest stable version
   namespace  = kubernetes_namespace.argocd.metadata[0].name
-  
+
   # Basic configuration for personal project
   values = [
     yamlencode({
       server = {
         service = {
-          type = "LoadBalancer"  # Expose ArgoCD UI
+          type = "LoadBalancer" # Expose ArgoCD UI
         }
       }
       # Disable components not needed for personal project
       dex = {
-        enabled = false  # Disable SSO
+        enabled = false # Disable SSO
       }
       notifications = {
-        enabled = false  # Disable notifications controller
+        enabled = false # Disable notifications controller
       }
       applicationSet = {
-        enabled = false  # Disable ApplicationSet controller
+        enabled = false # Disable ApplicationSet controller
       }
     })
   ]
-  
+
   depends_on = [kubernetes_namespace.argocd]
 }
 
@@ -43,6 +43,6 @@ data "kubernetes_secret" "argocd_admin" {
     name      = "argocd-initial-admin-secret"
     namespace = kubernetes_namespace.argocd.metadata[0].name
   }
-  
+
   depends_on = [helm_release.argocd]
 }

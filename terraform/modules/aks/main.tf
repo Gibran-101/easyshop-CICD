@@ -15,7 +15,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
     vm_size              = "Standard_DS2_v2"
     type                 = "VirtualMachineScaleSets"
     os_disk_size_gb      = 30
-    vnet_subnet_id = var.vnet_subnet_id
+    vnet_subnet_id       = var.vnet_subnet_id
     orchestrator_version = "1.29.0"
     node_labels = {
       environment = "dev"
@@ -53,6 +53,6 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
 resource "azurerm_role_assignment" "aks_keyvault_reader" {
   principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
   role_definition_name = "Key Vault Secrets User"
-  scope               = var.key_vault_id
+  scope                = var.key_vault_id
   # ...
 }
