@@ -94,11 +94,6 @@ jobs:
             -backend-config="container_name=tfstate" \
             -backend-config="key=terraform.tfstate"
 
-      - name: 🎯 Select Workspace
-        run: |
-          terraform workspace select ${{ github.event.inputs.environment || 'dev' }} || \
-          terraform workspace new ${{ github.event.inputs.environment || 'dev' }}
-
       - name: 📋 Terraform Plan
         id: plan
         run: |
