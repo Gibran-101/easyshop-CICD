@@ -28,15 +28,15 @@ output "aks_subnet_id" {
   value       = azurerm_subnet.aks_subnet.id
 }
 
-output "bastion_subnet_id" {
-  description = "The ID of the Bastion subnet"
-  value       = azurerm_subnet.bastion_subnet.id
-}
+# output "bastion_subnet_id" {
+#   description = "The ID of the Bastion subnet"
+#   value       = azurerm_subnet.bastion_subnet.id
+# }
 
-output "app_gateway_subnet_id" {
-  description = "The ID of the Application Gateway subnet"
-  value       = azurerm_subnet.app_gateway_subnet.id
-}
+# output "app_gateway_subnet_id" {
+#   description = "The ID of the Application Gateway subnet"
+#   value       = azurerm_subnet.app_gateway_subnet.id
+# }
 
 output "aks_nsg_id" {
   description = "The ID of the AKS Network Security Group"
