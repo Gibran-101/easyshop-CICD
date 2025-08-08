@@ -102,8 +102,13 @@ jobs:
       - name: 📋 Terraform Plan
         id: plan
         run: |
+          if [ ! -f environments/${{ env.ENVIRONMENT }}.tfvars ]; then
+            echo "ERROR: tfvars file for environment '${{ env.ENVIRONMENT }}' not found."
+            exit 1
+          fi
+
           terraform plan \
-            -var-file="environments/${{ github.event.inputs.environment || 'dev' }}.tfvars" \
+            -var-file="environments/${{ env.ENVIRONMENT }}.tfvars" \
             -no-color
 
       - name: 📊 Generate Plan Summary
