@@ -103,16 +103,16 @@ module "aks" {
 #   depends_on          = [module.aks]
 # }
 
-# # =======================
-# # Module: ArgoCD
-# # =======================
-# module "argocd" {
-#   source           = "./modules/argocd"
-#   kube_config      = module.aks.kube_config
-#   argocd_namespace = var.argocd_namespace
-#   tags             = var.tags
-#   depends_on       = [module.aks]
-# }
+# =======================
+# Module: ArgoCD
+# =======================
+module "argocd" {
+  source           = "./modules/argocd"
+  kube_config      = module.aks.kube_config
+  argocd_namespace = var.argocd_namespace
+  tags             = var.tags
+  depends_on       = [module.aks]
+}
 
 # # Store ArgoCD password in Application Key Vault
 # resource "azurerm_key_vault_secret" "argocd_admin_password" {
@@ -122,17 +122,19 @@ module "aks" {
 #   depends_on   = [module.app_keyvault, module.argocd]
 # }
 
-# # =======================
-# # Module: ArgoCD Image Updater
-# # =======================
+# =======================
+# Module: ArgoCD Image Updater
+# =======================
 # module "argocd_image_updater" {
-#   source           = "./modules/argocd-image-updater"
-#   acr_login_server = module.acr.acr_login_server
-#   argocd_namespace = var.argocd_namespace
-#   github_repo_url  = var.github_repo_url
-#   kube_config      = module.aks.kube_config
-#   tags             = var.tags
-#   depends_on       = [module.argocd, module.acr]
+#   source             = "./modules/argocd-image-updater"
+#   kube_config        = module.aks.kube_config
+#   argocd_namespace   = var.argocd_namespace
+#   acr_login_server   = module.acr.acr_login_server
+#   acr_admin_username = module.acr.admin_username
+#   acr_admin_password = module.acr.admin_password
+#   github_repo_url    = var.github_repo_url
+#   tags               = var.tags
+#   depends_on         = [module.argocd, module.acr]
 # }
 
 # # =======================
