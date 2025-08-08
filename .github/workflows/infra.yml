@@ -13,19 +13,8 @@ on:
     paths:
       - 'terraform/**'
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - staging
-          - prod
 
 # These environment variables are automatically picked up by Terraform
-# No need to configure them in your Terraform code!
 env:
   TERRAFORM_VERSION: '1.6.0'
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -42,23 +31,23 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🔐 Run Trivy security scan
+      - name: Run Trivy security scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'config'
-          scan-ref: './terraform'
+          scan-ref: '.'
           format: 'table'
-          exit-code: '0'  # Don't fail the build on security issues
+          exit-code: '0'  
           severity: 'CRITICAL,HIGH'
 
-      - name: 🛡️ Run Checkov scan
+      - name: Run Checkov scan
         id: checkov
         uses: bridgecrewio/checkov-action@master
         with:
-          directory: ./terraform
+          directory: .
           quiet: true
           soft_fail: true
           framework: terraform
@@ -74,18 +63,18 @@ jobs:
     needs: security
     defaults:
       run:
-        working-directory: ./terraform
+        working-directory: .
     
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🔧 Setup Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: ✅ Terraform Init
+      - name: Terraform Init
         id: init
         run: |
           terraform init \
@@ -94,16 +83,11 @@ jobs:
             -backend-config="container_name=tfstate" \
             -backend-config="key=terraform.tfstate"
 
-      - name: 📋 Terraform Plan
+      - name: Terraform Plan
         id: plan
         run: |
-          if [ ! -f environments/${{ env.ENVIRONMENT }}.tfvars ]; then
-            echo "ERROR: tfvars file for environment '${{ env.ENVIRONMENT }}' not found."
-            exit 1
-          fi
-
           terraform plan \
-            -var-file="environments/${{ env.ENVIRONMENT }}.tfvars" \
+            -var-file="terraform.tfvars" \
             -no-color
 
   # =====================================================
@@ -113,30 +97,24 @@ jobs:
     name: 'Terraform Apply'
     runs-on: ubuntu-latest
     needs: plan
-    if: |
-      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
-      github.event_name == 'workflow_dispatch'
-    environment:
-      name: ${{ github.event.inputs.environment || 'dev' }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     defaults:
       run:
-        working-directory: ./terraform
+        working-directory: .
     outputs:
-      aks_cluster_name: ${{ steps.outputs.outputs.aks_cluster_name }}
-      acr_login_server: ${{ steps.outputs.outputs.acr_login_server }}
-      key_vault_name: ${{ steps.outputs.outputs.key_vault_name }}
+      key_vault_name: ${{ steps.export.outputs.key_vault_name }}
     
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🔧 Setup Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false  # Important for getting outputs
 
-      - name: ✅ Terraform Init
+      - name: Terraform Init
         run: |
           terraform init \
             -backend-config="resource_group_name=tfstate-rg" \
@@ -144,40 +122,33 @@ jobs:
             -backend-config="container_name=tfstate" \
             -backend-config="key=terraform.tfstate"
 
-      - name: 🎯 Select Workspace
-        run: |
-          terraform workspace select ${{ github.event.inputs.environment || 'dev' }} || \
-          terraform workspace new ${{ github.event.inputs.environment || 'dev' }}
-
-      - name: 🚀 Terraform Apply
+      - name: Terraform Apply
         run: |
           terraform apply \
-            -var-file="environments/${{ github.event.inputs.environment || 'dev' }}.tfvars" \
+            -var-file="terraform.tfvars" \
             -auto-approve \
             -no-color
 
-      - name: 📤 Export Outputs
-        id: outputs
+      - name: Export Outputs
+        id: export
         run: |
-          # Capture outputs for next job
-          echo "aks_cluster_name=$(terraform output -raw aks_cluster_name 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
-          echo "acr_login_server=$(terraform output -raw acr_login_server 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
+          # Only capture outputs that exist in your current setup
           echo "key_vault_name=$(terraform output -raw key_vault_name 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
 
   # =====================================================
-  # Job 4: Trigger Deployment Workflow
+  # Job 4: Trigger CI/CD Deployment
   # =====================================================
   trigger-deploy:
-    name: 'Trigger ArgoCD Deployment'
+    name: 'Trigger CI/CD Pipeline'
     runs-on: ubuntu-latest
     needs: apply
     if: success()
     
     steps:
-      - name: 📥 Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: 🚀 Trigger Deploy Workflow
+      - name: Trigger Deploy Workflow
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -185,13 +156,7 @@ jobs:
           event-type: deploy-applications
           client-payload: |
             {
-              "environment": "${{ github.event.inputs.environment || 'dev' }}",
               "ref": "${{ github.ref }}",
               "sha": "${{ github.sha }}",
-              "aks_cluster_name": "${{ needs.apply.outputs.aks_cluster_name }}",
-              "acr_login_server": "${{ needs.apply.outputs.acr_login_server }}",
               "key_vault_name": "${{ needs.apply.outputs.key_vault_name }}"
             }
-
-#
-# For ARM_SUBSCRIPTION_ID, use your Azure subscription ID.
