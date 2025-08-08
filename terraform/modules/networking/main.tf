@@ -30,22 +30,6 @@ resource "azurerm_subnet" "aks_subnet" {
   ]
 }
 
-# Create Bastion subnet (optional - for secure VM access if needed later)
-resource "azurerm_subnet" "bastion_subnet" {
-  name                 = "AzureBastionSubnet" # Must be exactly this name
-  resource_group_name  = azurerm_resource_group.rg.name
-  virtual_network_name = azurerm_virtual_network.vnet.name
-  address_prefixes     = ["10.0.2.0/24"]
-}
-
-# Create Application Gateway subnet (for future ingress controller)
-resource "azurerm_subnet" "app_gateway_subnet" {
-  name                 = "app-gateway-subnet"
-  resource_group_name  = azurerm_resource_group.rg.name
-  virtual_network_name = azurerm_virtual_network.vnet.name
-  address_prefixes     = ["10.0.3.0/24"]
-}
-
 # Network Security Group for AKS
 resource "azurerm_network_security_group" "aks_nsg" {
   name                = "${var.project_name}-aks-nsg"
