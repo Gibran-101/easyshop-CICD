@@ -1,16 +1,31 @@
+# SSL certificate for the main application
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: easyshop-tls
+  name: easyshop-tls-cert
   namespace: easyshop
 spec:
-  dnsNames:
-    - easyshop.letsdeployit.com
+  # Certificate will be stored in this secret
+  secretName: easyshop-tls-cert
+  
+  # Use Let's Encrypt production issuer
   issuerRef:
-    group: cert-manager.io
+    name: letsencrypt-prod
     kind: ClusterIssuer
-    name: selfsigned-issuer
-  secretName: easyshop-tls
+    group: cert-manager.io
+  
+  # List of domains for this certificate
+  dnsNames:
+    - easyshop.buildandship.space
+    - www.buildandship.space
+    - app.buildandship.space
+  
+  # Certificate usages
   usages:
     - digital signature
-    - key encipherment 
+    - key encipherment
+    - server auth
+  
+  # Certificate duration (optional)
+  duration: 2160h # 90 days
+  renewBefore: 360h # 15 days before expiry
