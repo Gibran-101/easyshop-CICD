@@ -13,8 +13,9 @@ spec:
     metadata:
       labels:
         app: mongodb
+        component: database
     spec:
-      # Add node affinity for AKS if needed
+      # Node affinity for AKS
       affinity:
         nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -33,6 +34,13 @@ spec:
         - containerPort: 27017
           name: mongodb
         
+        # MongoDB with authentication enabled
+        command:
+        - mongod
+        - --auth  # Enable authentication
+        - --bind_ip_all
+        - --port=27017
+        
         # Environment variables for MongoDB authentication (from Azure Key Vault)
         env:
         - name: MONGO_INITDB_ROOT_USERNAME
@@ -46,10 +54,7 @@ spec:
               name: mongodb-keyvault-secret
               key: password
         - name: MONGO_INITDB_DATABASE
-          valueFrom:
-            secretKeyRef:
-              name: mongodb-keyvault-secret
-              key: database
+          value: "easyshop"
         
         volumeMounts:
         - name: mongodb-data
@@ -60,23 +65,42 @@ spec:
         
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "200m"
+            memory: "512Mi"
+            cpu: "250m"
           limits:
             memory: "1Gi"
             cpu: "500m"
         
-        # Health checks
+        # Health checks with authentication
         livenessProbe:
           exec:
             command:
             - mongo
+            - --username=$(MONGO_INITDB_ROOT_USERNAME)
+            - --password=$(MONGO_INITDB_ROOT_PASSWORD)
+            - --authenticationDatabase=admin
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 60  # Give more time for MongoDB to initialize with auth
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          exec:
+            command:
+            - mongo
+            - --username=$(MONGO_INITDB_ROOT_USERNAME)
+            - --password=$(MONGO_INITDB_ROOT_PASSWORD)
+            - --authenticationDatabase=admin
             - --eval
             - "db.adminCommand('ping')"
           initialDelaySeconds: 30
-          periodSeconds: 10
+          periodSeconds: 5
           timeoutSeconds: 5
-                # Volumes
+          failureThreshold: 3
+      
+      # Volumes
       volumes:
       - name: keyvault-secrets
         csi:
@@ -84,17 +108,6 @@ spec:
           readOnly: true
           volumeAttributes:
             secretProviderClass: "easyshop-keyvault-secrets"
-        
-        readinessProbe:
-          exec:
-            command:
-            - mongo
-            - --eval
-            - "db.adminCommand('ping')"
-          initialDelaySeconds: 5
-          periodSeconds: 5
-          timeoutSeconds: 5
-          failureThreshold: 3
   
   # Volume claim templates for AKS
   volumeClaimTemplates:
@@ -102,8 +115,7 @@ spec:
       name: mongodb-data
     spec:
       accessModes: ["ReadWriteOnce"]
-      # Use Azure Disk storage class for AKS
-      storageClassName: "managed-csi"  # Default AKS storage class
+      storageClassName: "managed-csi"
       resources:
         requests:
-          storage: 10Gi  # Increased storage for production use
+          storage: 10Gi
