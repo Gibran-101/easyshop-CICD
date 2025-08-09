@@ -4,7 +4,7 @@ metadata:
   name: easyshop-blue
   namespace: easyshop
 spec:
-  replicas: 2
+  replicas: 3  # Increased for production
   selector:
     matchLabels:
       app: easyshop
@@ -19,12 +19,18 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
+              name: http
+          
+          # Environment variables from ConfigMap
           envFrom:
             - configMapRef:
                 name: easyshop-config
             - secretRef:
                 name: easyshop-secrets
+          
+          # Specific environment variables (from Azure Key Vault)
           env:
+            # NextAuth configuration
             - name: NEXTAUTH_URL
               valueFrom:
                 configMapKeyRef:
@@ -40,6 +46,34 @@ spec:
                 secretKeyRef:
                   name: easyshop-secrets
                   key: JWT_SECRET
+            
+            # MongoDB connection (from Azure Key Vault)
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-keyvault-secret
+                  key: mongodb-uri
+            
+            # Redis connection (from Azure Key Vault)
+            - name: REDIS_URI
+              valueFrom:
+                secretKeyRef:
+                  name: redis-keyvault-secret
+                  key: redis-uri
+            
+            # Redis password (from Azure Key Vault)
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-keyvault-secret
+                  key: password
+          
+          # Volume mounts for Azure Key Vault secrets
+          volumeMounts:
+          - name: keyvault-secrets
+            mountPath: "/mnt/secrets-store"
+            readOnly: true
+          
           resources:
             requests:
               memory: "256Mi"
@@ -47,21 +81,37 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          
+          # Health checks
           startupProbe:
             httpGet:
               path: /
               port: 3000
             failureThreshold: 30
             periodSeconds: 10
+            
           readinessProbe:
             httpGet:
               path: /
               port: 3000
             initialDelaySeconds: 20
             periodSeconds: 15
+            timeoutSeconds: 5
+            
           livenessProbe:
             httpGet:
               path: /
               port: 3000
-            initialDelaySeconds: 25
+            initialDelaySeconds: 30
             periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+      
+      # Volumes for Azure Key Vault integration
+      volumes:
+      - name: keyvault-secrets
+        csi:
+          driver: secrets-store.csi.x-k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "easyshop-keyvault-secrets"
