@@ -81,27 +81,82 @@ module "aks" {
   depends_on = [module.networking, module.app_keyvault] #remember to add acr here
 }
 
-# # =======================
-# # Module: DNS (Azure DNS)
-# # =======================
-# module "dns" {
-#   source              = "./modules/dns"
-#   dns_zone_name       = var.dns_zone_name
-#   resource_group_name = module.networking.resource_group_name
-#   tags                = var.tags
-#   depends_on          = [module.networking]
-# }
+resource "helm_release" "nginx_ingress_controller" {
+  name       = "ingress-nginx"
+  repository = "https://kubernetes.github.io/ingress-nginx"
+  chart      = "ingress-nginx"
+  version    = "4.8.3"
+  namespace  = "ingress-nginx"
 
-# # =======================
-# # Module: Load Balancer
-# # =======================
-# module "loadbalancer" {
-#   source              = "./modules/loadbalancer"
-#   resource_group_name = module.networking.resource_group_name
-#   location            = var.location
-#   tags                = var.tags
-#   depends_on          = [module.aks]
-# }
+  create_namespace = true
+
+  # This creates a LoadBalancer with Azure FQDN
+  # Tell NGINX to use the static IP
+  set {
+    name  = "controller.service.loadBalancerIP"
+    value = module.dns.static_ip_address
+  }
+
+  depends_on = [module.aks]
+}
+
+# Get the LoadBalancer details
+data "kubernetes_service" "nginx_lb" {
+  metadata {
+    name      = "ingress-nginx-controller"
+    namespace = "ingress-nginx"
+  }
+
+  depends_on = [helm_release.nginx_ingress_controller]
+}
+
+
+# =======================
+# Module: DNS (Azure DNS)
+# =======================
+module "dns" {
+  source              = "./modules/dns"
+  project_name        = var.project_name
+  location            = var.location
+  dns_zone_name       = var.dns_zone_name
+  resource_group_name = module.networking.resource_group_name
+  tags                = var.tags
+
+  depends_on = [module.networking, helm_release.nginx_ingress_controller]
+}
+
+# ========================
+# NGINX-ingress controller
+# ========================
+
+# Install NGINX Ingress Controller (just the controller, not ingress rules)
+resource "helm_release" "nginx_ingress_controller" {
+  name       = "ingress-nginx"
+  repository = "https://kubernetes.github.io/ingress-nginx"
+  chart      = "ingress-nginx"
+  version    = "4.8.3"
+  namespace  = "ingress-nginx"
+
+  create_namespace = true
+
+  # This creates a LoadBalancer with Azure FQDN
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-dns-label-name"
+    value = "${var.project_name}-lb" # Creates: easyshop-lb.eastus.cloudapp.azure.com
+  }
+
+  depends_on = [module.aks]
+}
+
+# Get the LoadBalancer details
+data "kubernetes_service" "nginx_lb" {
+  metadata {
+    name      = "ingress-nginx-controller"
+    namespace = "ingress-nginx"
+  }
+
+  depends_on = [helm_release.nginx_ingress_controller]
+}
 
 # =======================
 # Module: ArgoCD
