@@ -4,10 +4,20 @@ metadata:
   name: easyshop-config
   namespace: easyshop
 data:
+  # Database connection - using AKS internal DNS
   MONGODB_URI: "mongodb://mongodb-0.mongodb-service.easyshop.svc.cluster.local:27017/easyshop"
+  
+  # Redis connection - using AKS internal DNS
   REDIS_URI: "redis://easyshop-redis.easyshop.svc.cluster.local:6379"
+  
+  # Application environment
   NODE_ENV: "production"
-  NEXT_PUBLIC_API_URL: "https://easyshop.letsdeployit.com/api" 
-  NEXTAUTH_URL: "https://easyshop.letsdeployit.com"  
+  
+  # External URLs - updated to use your new domain
+  NEXT_PUBLIC_API_URL: "https://easyshop.buildandship.space/api"
+  NEXTAUTH_URL: "https://easyshop.buildandship.space"
+  
+  # Application secrets (these should ideally come from Azure Key Vault)
+  # For now keeping them here, but consider using Azure Key Vault CSI driver
   NEXTAUTH_SECRET: "HmaFjYZ2jbUK7Ef+wZrBiJei4ZNGBAJ5IdiOGAyQegw="
   JWT_SECRET: "e5e425764a34a2117ec2028bd53d6f1388e7b90aeae9fa7735f2469ea3a6cc8c"
