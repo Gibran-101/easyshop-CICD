@@ -4,58 +4,26 @@ metadata:
   name: easyshop-ingress
   namespace: easyshop
   annotations:
-    # AKS-specific annotations
-    kubernetes.io/ingress.class: "azure/application-gateway"
-    # Alternative: Use nginx if you prefer nginx ingress controller
-    # kubernetes.io/ingress.class: "nginx"
+    # Use NGINX ingress controller
+    kubernetes.io/ingress.class: "nginx"
     
-    # SSL/TLS configuration
+    # SSL/TLS configuration with Let's Encrypt
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     
-    # General ingress settings
+    # NGINX specific settings
     nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     
-    # Azure Application Gateway specific (if using App Gateway)
-    appgw.ingress.kubernetes.io/ssl-redirect: "true"
-    appgw.ingress.kubernetes.io/backend-protocol: "http"
-    
 spec:
   tls:
   - hosts:
-    - easyshop.buildandship.space
-    - www.buildandship.space
-    - app.buildandship.space
+    - buildandship.space
     secretName: easyshop-tls-cert
   
   rules:
-  # Main application domain
-  - host: "easyshop.buildandship.space"
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: easyshop-service
-            port:
-              number: 80
-  
-  # www subdomain
-  - host: "www.buildandship.space"
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: easyshop-service
-            port:
-              number: 80
-  
-  # app subdomain
-  - host: "app.buildandship.space"
+  # Main application domain - no subdomains needed
+  - host: "buildandship.space"
     http:
       paths:
       - path: /
