@@ -13,6 +13,21 @@ output "key_vault_uri" {
   value       = module.app_keyvault.key_vault_uri
 }
 
+output "static_ip_address" {
+  description = "The static IP address"
+  value       = azurerm_public_ip.ingress_ip.ip_address
+}
+
+output "static_ip_fqdn" {
+  description = "The Azure FQDN"
+  value       = azurerm_public_ip.ingress_ip.fqdn
+}
+
+output "dns_nameservers" {
+  description = "Nameservers to configure at your domain registrar"
+  value       = module.dns.name_servers
+}
+
 # output "acr_login_server" {
 #   description = "ACR login server"
 #   value       = module.acr.acr_login_server

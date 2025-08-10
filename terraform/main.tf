@@ -81,6 +81,18 @@ module "aks" {
   depends_on = [module.networking, module.app_keyvault] #remember to add acr here
 }
 
+resource "azurerm_public_ip" "ingress_ip" {
+  name                = "${var.project_name}-ingress-ip"
+  location            = var.location
+  resource_group_name = module.networking.resource_group_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  domain_name_label   = "${var.project_name}-lb" # Creates: easyshop-lb.eastus.cloudapp.azure.com
+  tags                = var.tags
+
+  depends_on = [module.networking] # Only depends on networking
+}
+
 resource "helm_release" "nginx_ingress_controller" {
   name       = "ingress-nginx"
   repository = "https://kubernetes.github.io/ingress-nginx"
@@ -90,14 +102,18 @@ resource "helm_release" "nginx_ingress_controller" {
 
   create_namespace = true
 
-  # This creates a LoadBalancer with Azure FQDN
-  # Tell NGINX to use the static IP
+  # Use the static IP
   set {
     name  = "controller.service.loadBalancerIP"
-    value = module.dns.static_ip_address
+    value = azurerm_public_ip.ingress_ip.ip_address
   }
 
-  depends_on = [module.aks]
+  # Tell Azure which resource group has the IP
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-resource-group"
+    value = module.networking.resource_group_name
+  }
+  depends_on = [module.aks, azurerm_public_ip.ingress_ip] # Depends on AKS and Static IP
 }
 
 # Get the LoadBalancer details
@@ -115,14 +131,15 @@ data "kubernetes_service" "nginx_lb" {
 # Module: DNS (Azure DNS)
 # =======================
 module "dns" {
-  source              = "./modules/dns"
-  project_name        = var.project_name
-  location            = var.location
-  dns_zone_name       = var.dns_zone_name
-  resource_group_name = module.networking.resource_group_name
-  tags                = var.tags
+  source               = "./modules/dns"
+  project_name         = var.project_name
+  location             = var.location
+  dns_zone_name        = var.dns_zone_name
+  resource_group_name  = module.networking.resource_group_name
+  ingress_public_ip_id = azurerm_public_ip.ingress_ip.id
+  tags                 = var.tags
 
-  depends_on = [module.networking, helm_release.nginx_ingress_controller]
+  depends_on = [module.networking, azurerm_public_ip.ingress_ip]
 }
 
 # =======================

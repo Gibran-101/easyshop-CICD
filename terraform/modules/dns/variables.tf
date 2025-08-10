@@ -18,14 +18,13 @@ variable "location" {
   type        = string
 }
 
-variable "create_www_redirect" {
-  description = "Create www subdomain redirect"
-  type        = bool
-  default     = false # Keep it simple - just root domain
-}
-
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
   default     = {}
+}
+
+variable "ingress_public_ip_id" {
+  description = "Resource ID of the static public IP (passed from main.tf)"
+  type        = string
 }
