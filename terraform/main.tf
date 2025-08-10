@@ -125,39 +125,6 @@ module "dns" {
   depends_on = [module.networking, helm_release.nginx_ingress_controller]
 }
 
-# ========================
-# NGINX-ingress controller
-# ========================
-
-# Install NGINX Ingress Controller (just the controller, not ingress rules)
-resource "helm_release" "nginx_ingress_controller" {
-  name       = "ingress-nginx"
-  repository = "https://kubernetes.github.io/ingress-nginx"
-  chart      = "ingress-nginx"
-  version    = "4.8.3"
-  namespace  = "ingress-nginx"
-
-  create_namespace = true
-
-  # This creates a LoadBalancer with Azure FQDN
-  set {
-    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-dns-label-name"
-    value = "${var.project_name}-lb" # Creates: easyshop-lb.eastus.cloudapp.azure.com
-  }
-
-  depends_on = [module.aks]
-}
-
-# Get the LoadBalancer details
-data "kubernetes_service" "nginx_lb" {
-  metadata {
-    name      = "ingress-nginx-controller"
-    namespace = "ingress-nginx"
-  }
-
-  depends_on = [helm_release.nginx_ingress_controller]
-}
-
 # =======================
 # Module: ArgoCD
 # =======================
