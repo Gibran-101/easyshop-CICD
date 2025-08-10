@@ -12,16 +12,21 @@ resources:
 - 05-secrets.yaml
 - 15-keyvault-secret-provider.yaml  # Azure Key Vault integration
 - 06-mongodb-service.yaml
-- 07-mongodb-statefulset.yaml  # Updated for AKS storage + Key Vault + authentication
+- 07-mongodb-statefulset.yaml  # Uses managed-csi (no need for 02-mongodb-pv.yaml)
 - 08-easyshop-deployment.yaml  # Updated with Key Vault secrets + production settings
 - 09-easyshop-service.yaml  # Updated with ClusterIP + LoadBalancer options
 - 10-ingress.yaml  # Updated for AKS with buildandship.space domain
 - 11-hpa.yaml
 - 12-migration-job.yaml
 - 13-redis-service.yaml
-- 14-redis-deployment.yaml  # Updated with Key Vault secrets + authentication
-- cert-manager-issuer.yaml  # Let's Encrypt issuers
+- 14-redis-deployment.yaml  # Updated with Key Vault secrets + authentication + ConfigMap
+- cert-manager-issuer.yaml  # Let's Encrypt production issuer only
 - easyshop-certificate.yaml  # SSL certificates for buildandship.space
+
+# NOTE: 02-mongodb-pv.yaml is NOT needed because:
+# - StatefulSet uses volumeClaimTemplates with managed-csi storage class
+# - AKS automatically provisions PVs when PVCs are created
+# - No manual PV creation required for managed storage
 
 # Common labels applied to all resources
 commonLabels:
@@ -34,10 +39,10 @@ commonLabels:
 commonAnnotations:
   config.kubernetes.io/local-config: "true"
 
-# Images to update (useful for CI/CD)
+# Images to update (semantic versioning for better tracking)
 images:
 - name: gibranf/easyshop
-  newTag: latest  # This can be updated by CI/CD pipeline
+  newTag: v1.0.0  # Semantic versioning instead of "latest"
 
 # Resource transformations
 patches:
