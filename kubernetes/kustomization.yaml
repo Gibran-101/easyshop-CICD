@@ -23,11 +23,6 @@ resources:
 - cert-manager-issuer.yaml  # Let's Encrypt production issuer only
 - easyshop-certificate.yaml  # SSL certificates for buildandship.space
 
-# NOTE: 02-mongodb-pv.yaml is NOT needed because:
-# - StatefulSet uses volumeClaimTemplates with managed-csi storage class
-# - AKS automatically provisions PVs when PVCs are created
-# - No manual PV creation required for managed storage
-
 # Common labels applied to all resources
 commonLabels:
   app.kubernetes.io/name: easyshop
@@ -58,7 +53,7 @@ patches:
 # Replica count overrides for production
 replicas:
 - name: easyshop
-  count: 3  # Scale up for production
+  count: 2  # Scale up for production
 - name: mongodb
   count: 1  # Keep MongoDB as single instance
 - name: redis
