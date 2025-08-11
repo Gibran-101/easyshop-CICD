@@ -1,0 +1,142 @@
+name:  Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "DESTROY" to confirm deletion of all resources'
+        required: true
+        type: string
+
+env:
+  TERRAFORM_VERSION: '1.6.0'
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  # =====================================================
+  # Job 1: Safety Check
+  # =====================================================
+  safety_check:
+    name: ' Safety Confirmation'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
+            echo " Invalid confirmation"
+            exit 1
+          fi
+
+      - name: Final warning
+        run: |
+          echo " WARNING: This will permanently delete all infrastructure"
+          echo " Starting in 10 seconds..."
+          sleep 10
+
+  # =====================================================
+  # Job 2: Team Notification (Commented Out)
+  # =====================================================
+  # notify_team:
+  #   name: ' Notify Team'
+  #   runs-on: ubuntu-latest
+  #   needs: safety_check
+  #   
+  #   steps:
+  #     - name: Send notification
+  #       run: |
+  #         # TODO: Add Slack webhook when ready
+  #         # curl -X POST -H 'Content-type: application/json' \
+  #         #   --data '{"text":"Infrastructure destruction started"}' \
+  #         #   ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # =====================================================
+  # Job 3: Terraform Destroy
+  # =====================================================
+  terraform_destroy:
+    name: '🔧 Terraform Destroy'
+    runs-on: ubuntu-latest
+    needs: safety_check
+    defaults:
+      run:
+        working-directory: terraform
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Create terraform.tfvars
+        run: |
+          cat > terraform.tfvars << EOF
+          project_name = "${{ secrets.TF_PROJECT_NAME }}"
+          location     = "${{ secrets.TF_LOCATION }}"
+          acr_name = "${{ secrets.TF_ACR_NAME }}"
+          aks_cluster_name = "${{ secrets.TF_AKS_CLUSTER_NAME }}"
+          dns_zone_name = "${{ secrets.TF_DNS_ZONE_NAME }}"
+          argocd_namespace = "${{ secrets.TF_ARGOCD_NAMESPACE }}"
+          github_repo_url  = "${{ secrets.TF_GITHUB_REPO_URL }}"
+          observability_namespace = "${{ secrets.TF_OBSERVABILITY_NAMESPACE }}"
+          admin_object_id = "${{ secrets.TF_ADMIN_OBJECT_ID }}"
+          allowed_ips = ${{ secrets.TF_ALLOWED_IPS }}
+          tags = {
+            Project   = "EasyShop"
+            ManagedBy = "Terraform"
+            Owner     = "${{ secrets.TF_OWNER }}"
+          }
+          EOF
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
+            -backend-config="key=${{ secrets.TF_STATE_KEY }}"
+
+      - name: Terraform Plan Destroy
+        run: |
+          terraform plan -destroy \
+            -var-file="terraform.tfvars" \
+            -out=destroy.tfplan
+
+      - name: Terraform Destroy
+        run: |
+          terraform apply destroy.tfplan
+
+  # =====================================================
+  # Job 4: Post-Destruction Verification
+  # =====================================================
+  verify_destruction:
+    name: ' Verify Complete Destruction'
+    runs-on: ubuntu-latest
+    needs: terraform_destroy
+    if: always() && needs.terraform_destroy.result == 'success'
+    
+    steps:
+      - name: Azure CLI Login
+        uses: azure/login@v1
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.ARM_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.ARM_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.ARM_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.ARM_TENANT_ID }}"
+            }
+
+      - name: Check remaining resources
+        run: |
+          echo " Checking cleanup status..."
+          az group list --query "[?contains(name, '${{ secrets.TF_PROJECT_NAME }}')].name" -o tsv || true
+
+      - name: Destruction complete
+        run: |
+          echo " Infrastructure destroyed by ${{ github.actor }}"
