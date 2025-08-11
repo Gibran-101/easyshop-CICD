@@ -28,6 +28,24 @@ output "dns_nameservers" {
   value       = module.dns.name_servers
 }
 
+# Output values for Kubernetes manifest templating
+output "managed_identity_client_id" {
+  description = "Client ID of the managed identity for Key Vault access"
+  value       = module.keyvault_secrets.managed_identity_client_id
+  sensitive   = false
+}
+
+output "tenant_id" {
+  description = "Azure AD tenant ID"
+  value       = data.azurerm_client_config.current.tenant_id
+  sensitive   = false
+}
+
+output "secrets_stored" {
+  description = "List of secrets stored in Key Vault"
+  value       = module.keyvault_secrets.secrets_stored
+}
+
 # output "acr_login_server" {
 #   description = "ACR login server"
 #   value       = module.acr.acr_login_server

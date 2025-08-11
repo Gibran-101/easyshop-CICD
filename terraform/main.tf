@@ -176,6 +176,26 @@ module "argocd_image_updater" {
   depends_on         = [module.argocd, module.acr]
 }
 
+# =======================
+# Module: Key Vault Secrets (NEW)
+# =======================
+module "keyvault_secrets" {
+  source = "./modules/keyvault-secrets"
+
+  project_name                   = var.project_name
+  location                       = var.location
+  resource_group_name            = module.networking.resource_group_name
+  key_vault_id                   = module.app_keyvault.key_vault_id
+  tenant_id                      = data.azurerm_client_config.current.tenant_id
+  subscription_id                = data.azurerm_client_config.current.subscription_id
+  aks_kubelet_identity_object_id = module.aks.kubelet_identity.object_id
+  aks_node_resource_group        = module.aks.node_resource_group
+
+  tags = var.tags
+
+  depends_on = [module.app_keyvault, module.aks]
+}
+
 # # =======================
 # # Module: Observability (Grafana, Prometheus, Loki)
 # # =======================
