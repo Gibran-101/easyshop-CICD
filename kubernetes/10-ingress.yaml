@@ -4,14 +4,26 @@ metadata:
   name: easyshop-ingress
   namespace: easyshop
   annotations:
-    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # Use NGINX ingress controller
     kubernetes.io/ingress.class: "nginx"
+    
+    # SSL/TLS configuration with Let's Encrypt
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # NGINX specific settings
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
-
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    
 spec:
+  tls:
+  - hosts:
+    - buildandship.space
+    secretName: easyshop-tls-cert
+  
   rules:
-  - host: "easyshop.3.94.158.28.nip.io"
+  # Main application domain - no subdomains needed
+  - host: "buildandship.space"
     http:
       paths:
       - path: /
@@ -21,4 +33,3 @@ spec:
             name: easyshop-service
             port:
               number: 80
- 

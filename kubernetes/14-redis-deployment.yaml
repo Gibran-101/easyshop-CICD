@@ -1,8 +1,57 @@
+# Redis configuration (non-sensitive configs)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: easyshop
+data:
+  redis.conf: |
+    # Redis configuration for EasyShop
+    bind 0.0.0.0
+    port 6379
+    
+    # Persistence settings
+    appendonly yes
+    appendfsync everysec
+    
+    # Memory settings
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+    
+    # Performance tuning
+    tcp-keepalive 300
+    timeout 0
+    
+    # Logging
+    loglevel notice
+    
+    # Security - password will be set via environment variable
+    # requirepass will be set dynamically in deployment
+
+---
+# Redis PVC for persistence
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: easyshop
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: managed-csi  # AKS storage class
+  resources:
+    requests:
+      storage: 1Gi
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis
   namespace: easyshop
+  labels:
+    app: redis
+    component: cache
 spec:
   replicas: 1
   selector:
@@ -12,12 +61,40 @@ spec:
     metadata:
       labels:
         app: redis
+        component: cache
     spec:
       containers:
         - name: redis
-          image: redis:7.0-alpine
+          image: redis:7.2-alpine
           ports:
             - containerPort: 6379
+              name: redis
+          
+          # Redis configuration with authentication from Key Vault
+          command:
+            - redis-server
+            - /usr/local/etc/redis/redis.conf
+            - --requirepass $(REDIS_PASSWORD)
+          
+          # Environment variables for Redis (REDIS_PASSWORD comes from Azure Key Vault)
+          env:
+          - name: REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: redis-keyvault-secret  # Created by CSI driver from Key Vault
+                key: password
+          
+          # Volume mounts
+          volumeMounts:
+          - name: redis-data
+            mountPath: /data
+          - name: redis-config
+            mountPath: /usr/local/etc/redis/redis.conf
+            subPath: redis.conf
+          - name: keyvault-secrets
+            mountPath: "/mnt/secrets-store"
+            readOnly: true
+          
           resources:
             requests:
               memory: "128Mi"
@@ -25,17 +102,43 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "200m"
+          
+          # Health checks with authentication
           livenessProbe:
             exec:
               command:
               - redis-cli
+              - -a
+              - $(REDIS_PASSWORD)
               - ping
-            initialDelaySeconds: 15
-            periodSeconds: 20
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            
           readinessProbe:
             exec:
               command:
               - redis-cli
+              - -a
+              - $(REDIS_PASSWORD)
               - ping
             initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      
+      # Volumes
+      volumes:
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-pvc
+      - name: redis-config
+        configMap:
+          name: redis-config 
+      - name: keyvault-secrets
+        csi:
+          driver: secrets-store.csi.x-k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "easyshop-keyvault-secrets"

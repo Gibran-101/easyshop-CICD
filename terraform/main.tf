@@ -1,75 +1,149 @@
-# Create IAM role for bastion
-resource "aws_iam_role" "bastion" {
-  name = "${local.tags.Name}-bastion-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-      }
-    ]
-  })
+# Data source to get current Azure client configuration
+data "azurerm_client_config" "current" {}
+
+# =======================
+# Module: networking
+# =======================
+module "networking" {
+  source       = "./modules/networking"
+  project_name = var.project_name
+  location     = var.location
+  tags         = var.tags
 }
 
-# Attach policies to bastion role
-resource "aws_iam_role_policy_attachment" "bastion_eks" {
-  role       = aws_iam_role.bastion.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+# =======================
+# Module: Application Key Vault (for storing app secrets)
+# =======================
+module "app_keyvault" {
+  source              = "./modules/vault"
+  key_vault_name      = "${var.project_name}-kv"
+  location            = var.location
+  resource_group_name = module.networking.resource_group_name
+  tenant_id           = data.azurerm_client_config.current.tenant_id
+  admin_object_id     = coalesce(var.admin_object_id, data.azurerm_client_config.current.object_id)
+
+  # Simple network ACLs for personal project
+  network_acls = {
+    default_action             = "Allow" # Allow all for personal project
+    bypass                     = "AzureServices"
+    ip_rules                   = var.allowed_ips # Add your home IP if you want
+    virtual_network_subnet_ids = [module.networking.aks_subnet_id]
+  }
+
+  tags       = var.tags
+  depends_on = [module.networking]
 }
 
-# Create instance profile for bastion
-resource "aws_iam_instance_profile" "bastion" {
-  name = "${local.tags.Name}-bastion-profile"
-  role = aws_iam_role.bastion.name
+# # =======================
+# Module: ACR (Container Registry)
+# =======================
+module "acr" {
+  source              = "./modules/acr"
+  acr_name            = var.acr_name
+  resource_group_name = module.networking.resource_group_name
+  location            = var.location
+  tags                = var.tags
+  depends_on          = [module.networking]
 }
 
-module "vpc" {
-  source = "./modules/vpc"
-  vpc_name        = local.vpc_name
-  vpc_cidr        = local.vpc_cidr
-  azs             = local.azs
-  public_subnets  = local.public_subnets
-  private_subnets = local.private_subnets
-  intra_subnets   = local.intra_subnets
-  tags            = local.tags
+# Store ACR credentials in Application Key Vault
+resource "azurerm_key_vault_secret" "acr_admin_username" {
+  name         = "acr-admin-username"
+  value        = module.acr.admin_username
+  key_vault_id = module.app_keyvault.key_vault_id
+  depends_on   = [module.app_keyvault, module.acr]
 }
 
-module "security_group" {
-  source = "./modules/security_group"
-  name        = local.sg_name
-  vpc_id      = module.vpc.vpc_id
-  vpc_cidr    = local.vpc_cidr
-  tags        = local.tags
-  environment = local.environment
+resource "azurerm_key_vault_secret" "acr_admin_password" {
+  name         = "acr-admin-password"
+  value        = module.acr.admin_password
+  key_vault_id = module.app_keyvault.key_vault_id
+  depends_on   = [module.app_keyvault, module.acr]
 }
 
-module "eks" {
-  source = "./modules/eks"
-  cluster_name              = local.cluster_name
-  cluster_version           = local.cluster_version
-  environment               = local.environment
-  vpc_id                    = module.vpc.vpc_id
-  subnet_ids                = module.vpc.public_subnets
-  control_plane_subnet_ids  = module.vpc.private_subnets
-  bastion_security_group_id = module.security_group.bastion_security_group_id
-  eks_addon_versions = local.eks_addon_versions
-  tags = local.tags
+# =======================
+# Module: AKS (Kubernetes Cluster)
+# =======================
+module "aks" {
+  source              = "./modules/aks"
+  aks_cluster_name    = var.aks_cluster_name
+  resource_group_name = module.networking.resource_group_name
+  location            = var.location
+  vnet_subnet_id      = module.networking.aks_subnet_id
+  acr_id              = module.acr.acr_id
+  key_vault_id        = module.app_keyvault.key_vault_id
+  node_count          = 2
+  vm_size             = "Standard_B2s"
+  enable_auto_scaling = false
+
+
+  tags       = var.tags
+  depends_on = [module.networking, module.app_keyvault] #remember to add acr here
 }
 
-module "bastion" {
-  source               = "./modules/bastion"
-  depends_on           = [module.eks]
-  name                 = local.tags.Name
-  key_name             = local.key_name
-  instance_type        = local.instance_type
-  region               = local.region
-  cluster_name         = local.cluster_name
-  tags                 = local.tags
-  subnet_id            = module.vpc.public_subnets[0]
-  security_group_id    = module.security_group.bastion_security_group_id
-  iam_instance_profile = aws_iam_instance_profile.bastion.name
+# # =======================
+# # Module: DNS (Azure DNS)
+# # =======================
+# module "dns" {
+#   source              = "./modules/dns"
+#   dns_zone_name       = var.dns_zone_name
+#   resource_group_name = module.networking.resource_group_name
+#   tags                = var.tags
+#   depends_on          = [module.networking]
+# }
+
+# # =======================
+# # Module: Load Balancer
+# # =======================
+# module "loadbalancer" {
+#   source              = "./modules/loadbalancer"
+#   resource_group_name = module.networking.resource_group_name
+#   location            = var.location
+#   tags                = var.tags
+#   depends_on          = [module.aks]
+# }
+
+# =======================
+# Module: ArgoCD
+# =======================
+module "argocd" {
+  source           = "./modules/argocd"
+  kube_config      = module.aks.kube_config
+  argocd_namespace = var.argocd_namespace
+  tags             = var.tags
+  depends_on       = [module.aks]
 }
+
+# # Store ArgoCD password in Application Key Vault
+# resource "azurerm_key_vault_secret" "argocd_admin_password" {
+#   name         = "argocd-admin-password"
+#   value        = module.argocd.admin_password
+#   key_vault_id = module.app_keyvault.key_vault_id
+#   depends_on   = [module.app_keyvault, module.argocd]
+# }
+
+# =======================
+# Module: ArgoCD Image Updater
+# =======================
+module "argocd_image_updater" {
+  source             = "./modules/argocd-image-updater"
+  kube_config        = module.aks.kube_config
+  argocd_namespace   = var.argocd_namespace
+  acr_login_server   = module.acr.acr_login_server
+  acr_admin_username = module.acr.admin_username
+  acr_admin_password = module.acr.admin_password
+  github_repo_url    = var.github_repo_url
+  tags               = var.tags
+  depends_on         = [module.argocd, module.acr]
+}
+
+# # =======================
+# # Module: Observability (Grafana, Prometheus, Loki)
+# # =======================
+# module "observability" {
+#   source           = "./modules/observability"
+#   kube_config      = module.aks.kube_config
+#   observability_ns = var.observability_namespace
+#   tags             = var.tags
+#   depends_on       = [module.aks]
+# }

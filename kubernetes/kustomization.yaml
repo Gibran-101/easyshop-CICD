@@ -1,21 +1,60 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Namespace for all resources
+namespace: easyshop
+
+# Resources to deploy
 resources:
 - 00-priority-class.yaml
 - 01-namespace.yaml
-- 02-mongodb-pv.yaml
-# 03-mongodb-pvc.yaml removed - PVC is created by StatefulSet
 - 04-configmap.yaml
 - 05-secrets.yaml
+- 15-keyvault-secret-provider.yaml  # Azure Key Vault integration
 - 06-mongodb-service.yaml
-- 07-mongodb-statefulset.yaml
-- 08-easyshop-deployment.yaml
-- 09-easyshop-service.yaml
-- 10-ingress.yaml
+- 07-mongodb-statefulset.yaml  # Uses managed-csi (no need for 02-mongodb-pv.yaml)
+- 08-easyshop-deployment.yaml  # Updated with Key Vault secrets + production settings
+- 09-easyshop-service.yaml  # Updated with ClusterIP + LoadBalancer options
+- 10-ingress.yaml  # Updated for AKS with buildandship.space domain
 - 11-hpa.yaml
 - 12-migration-job.yaml
 - 13-redis-service.yaml
-- 14-redis-deployment.yaml
-- selfsigned-issuer.yaml
-- easyshop-certificate.yaml
+- 14-redis-deployment.yaml  # Updated with Key Vault secrets + authentication + ConfigMap
+- cert-manager-issuer.yaml  # Let's Encrypt production issuer only
+- easyshop-certificate.yaml  # SSL certificates for buildandship.space
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: easyshop
+  app.kubernetes.io/part-of: easyshop-platform
+  app.kubernetes.io/managed-by: kustomize
+  environment: production
+
+# Common annotations
+commonAnnotations:
+  config.kubernetes.io/local-config: "true"
+
+# Images to update (semantic versioning for better tracking)
+images:
+- name: gibranf/easyshop
+  newTag: v1.0.0  # Semantic versioning instead of "latest"
+
+# Resource transformations
+patches:
+# Patch to use Azure storage class for MongoDB
+- patch: |-
+    - op: replace
+      path: /spec/volumeClaimTemplates/0/spec/storageClassName
+      value: managed-csi
+  target:
+    kind: StatefulSet
+    name: mongodb
+
+# Replica count overrides for production
+replicas:
+- name: easyshop
+  count: 2  # Scale up for production
+- name: mongodb
+  count: 1  # Keep MongoDB as single instance
+- name: redis
+  count: 1  # Keep Redis as single instance

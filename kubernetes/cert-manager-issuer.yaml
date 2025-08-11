@@ -1,0 +1,22 @@
+# Let's Encrypt production issuer for real SSL certificates
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    # ACME server URL for Let's Encrypt production
+    server: https://acme-v02.api.letsencrypt.org/directory
+    
+    # Email for ACME registration (replace with your email)
+    email: iemafzalhassan@gmail.com
+    
+    # Name of a secret used to store the ACME account private key
+    privateKeySecretRef:
+      name: letsencrypt-prod-private-key
+    
+    # ACME Challenge solver configuration
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
