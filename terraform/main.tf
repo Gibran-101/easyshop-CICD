@@ -81,27 +81,66 @@ module "aks" {
   depends_on = [module.networking, module.app_keyvault] #remember to add acr here
 }
 
-# # =======================
-# # Module: DNS (Azure DNS)
-# # =======================
-# module "dns" {
-#   source              = "./modules/dns"
-#   dns_zone_name       = var.dns_zone_name
-#   resource_group_name = module.networking.resource_group_name
-#   tags                = var.tags
-#   depends_on          = [module.networking]
-# }
+resource "azurerm_public_ip" "ingress_ip" {
+  name                = "${var.project_name}-ingress-ip"
+  location            = var.location
+  resource_group_name = module.networking.resource_group_name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  domain_name_label   = "${var.project_name}-lb" # Creates: easyshop-lb.eastus.cloudapp.azure.com
+  tags                = var.tags
 
-# # =======================
-# # Module: Load Balancer
-# # =======================
-# module "loadbalancer" {
-#   source              = "./modules/loadbalancer"
-#   resource_group_name = module.networking.resource_group_name
-#   location            = var.location
-#   tags                = var.tags
-#   depends_on          = [module.aks]
-# }
+  depends_on = [module.networking] # Only depends on networking
+}
+
+resource "helm_release" "nginx_ingress_controller" {
+  name       = "ingress-nginx"
+  repository = "https://kubernetes.github.io/ingress-nginx"
+  chart      = "ingress-nginx"
+  version    = "4.8.3"
+  namespace  = "ingress-nginx"
+
+  create_namespace = true
+
+  # Use the static IP
+  set {
+    name  = "controller.service.loadBalancerIP"
+    value = azurerm_public_ip.ingress_ip.ip_address
+  }
+
+  # Tell Azure which resource group has the IP
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-resource-group"
+    value = module.networking.resource_group_name
+  }
+  depends_on = [module.aks, azurerm_public_ip.ingress_ip] # Depends on AKS and Static IP
+}
+
+# Get the LoadBalancer details
+data "kubernetes_service" "nginx_lb" {
+  metadata {
+    name      = "ingress-nginx-controller"
+    namespace = "ingress-nginx"
+  }
+
+  depends_on = [helm_release.nginx_ingress_controller]
+}
+
+
+# =======================
+# Module: DNS (Azure DNS)
+# =======================
+module "dns" {
+  source               = "./modules/dns"
+  project_name         = var.project_name
+  location             = var.location
+  dns_zone_name        = var.dns_zone_name
+  resource_group_name  = module.networking.resource_group_name
+  ingress_public_ip_id = azurerm_public_ip.ingress_ip.id
+  tags                 = var.tags
+
+  depends_on = [module.networking, azurerm_public_ip.ingress_ip]
+}
 
 # =======================
 # Module: ArgoCD
@@ -135,6 +174,26 @@ module "argocd_image_updater" {
   github_repo_url    = var.github_repo_url
   tags               = var.tags
   depends_on         = [module.argocd, module.acr]
+}
+
+# =======================
+# Module: Key Vault Secrets (NEW)
+# =======================
+module "keyvault_secrets" {
+  source = "./modules/keyvault-secrets"
+
+  project_name                   = var.project_name
+  location                       = var.location
+  resource_group_name            = module.networking.resource_group_name
+  key_vault_id                   = module.app_keyvault.key_vault_id
+  tenant_id                      = data.azurerm_client_config.current.tenant_id
+  subscription_id                = data.azurerm_client_config.current.subscription_id
+  aks_kubelet_identity_object_id = module.aks.kubelet_identity.object_id
+  aks_node_resource_group        = module.aks.node_resource_group
+
+  tags = var.tags
+
+  depends_on = [module.app_keyvault, module.aks]
 }
 
 # # =======================

@@ -13,6 +13,39 @@ output "key_vault_uri" {
   value       = module.app_keyvault.key_vault_uri
 }
 
+output "static_ip_address" {
+  description = "The static IP address"
+  value       = azurerm_public_ip.ingress_ip.ip_address
+}
+
+output "static_ip_fqdn" {
+  description = "The Azure FQDN"
+  value       = azurerm_public_ip.ingress_ip.fqdn
+}
+
+output "dns_nameservers" {
+  description = "Nameservers to configure at your domain registrar"
+  value       = module.dns.name_servers
+}
+
+# Output values for Kubernetes manifest templating
+output "managed_identity_client_id" {
+  description = "Client ID of the managed identity for Key Vault access"
+  value       = module.keyvault_secrets.managed_identity_client_id
+  sensitive   = false
+}
+
+output "tenant_id" {
+  description = "Azure AD tenant ID"
+  value       = data.azurerm_client_config.current.tenant_id
+  sensitive   = false
+}
+
+output "secrets_stored" {
+  description = "List of secrets stored in Key Vault"
+  value       = module.keyvault_secrets.secrets_stored
+}
+
 # output "acr_login_server" {
 #   description = "ACR login server"
 #   value       = module.acr.acr_login_server
