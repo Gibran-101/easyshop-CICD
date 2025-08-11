@@ -72,25 +72,14 @@ jobs:
           download_external_modules: true
 
   # =====================================================
-  # Job 2: Terraform Plan
+  # Job 2: Prepare Terraform Configuration
   # =====================================================
-  plan:
-    name: 'Terraform Plan'
+  prepare-config:
+    name: 'Prepare Terraform Configuration'
     runs-on: ubuntu-latest
     needs: security
-    defaults:
-      run:
-        working-directory: terraform
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
       - name: Create terraform.tfvars from secrets
         run: |
           cat > terraform.tfvars << EOF
@@ -126,14 +115,53 @@ jobs:
           }
           EOF
 
+      - name: Create backend configuration
+        run: |
+          cat > backend.conf << EOF
+          resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+          storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+          container_name       = "${{ secrets.TF_STATE_CONTAINER }}"
+          key                  = "${{ secrets.TF_STATE_KEY }}"
+          EOF
+
+      - name: Upload Terraform Configuration Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-config
+          path: |
+            terraform.tfvars
+            backend.conf
+          retention-days: 5
+
+  # =====================================================
+  # Job 3: Terraform Plan
+  # =====================================================
+  plan:
+    name: 'Terraform Plan'
+    runs-on: ubuntu-latest
+    needs: prepare-config
+    defaults:
+      run:
+        working-directory: terraform
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Terraform Configuration
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-config
+          path: terraform/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
       - name: Terraform Init
         id: init
-        run: |
-          terraform init \
-            -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
-            -backend-config="key=${{ secrets.TF_STATE_KEY }}"
+        run: terraform init -backend-config="backend.conf"
 
       - name: Terraform Validate
         run: terraform validate
@@ -154,12 +182,12 @@ jobs:
           retention-days: 5
 
   # =====================================================
-  # Job 3: Terraform Apply
+  # Job 4: Terraform Apply
   # =====================================================
   apply:
     name: 'Terraform Apply'
     runs-on: ubuntu-latest
-    needs: plan
+    needs: [prepare-config, plan]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     defaults:
       run:
@@ -173,54 +201,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Download Terraform Configuration
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-config
+          path: terraform/
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false  # Important for getting outputs
 
-      - name: Create terraform.tfvars from secrets
-        run: |
-          cat > terraform.tfvars << EOF
-          # Project Configuration
-          project_name = "${{ secrets.TF_PROJECT_NAME }}"
-          location     = "${{ secrets.TF_LOCATION }}"
-
-          # ACR Configuration (must be globally unique)
-          acr_name = "${{ secrets.TF_ACR_NAME }}"
-
-          # AKS Configuration
-          aks_cluster_name = "${{ secrets.TF_AKS_CLUSTER_NAME }}"
-
-          # DNS Configuration
-          dns_zone_name = "${{ secrets.TF_DNS_ZONE_NAME }}"
-
-          # ArgoCD Configuration
-          argocd_namespace = "${{ secrets.TF_ARGOCD_NAMESPACE }}"
-          github_repo_url  = "${{ secrets.TF_GITHUB_REPO_URL }}"
-
-          # Observability Configuration
-          observability_namespace = "${{ secrets.TF_OBSERVABILITY_NAMESPACE }}"
-
-          # Optional configurations
-          admin_object_id = "${{ secrets.TF_ADMIN_OBJECT_ID }}"
-          allowed_ips = ${{ secrets.TF_ALLOWED_IPS }}
-
-          # Tags
-          tags = {
-            Project   = "EasyShop"
-            ManagedBy = "Terraform"
-            Owner     = "${{ secrets.TF_OWNER }}"
-          }
-          EOF
-
       - name: Terraform Init
-        run: |
-          terraform init \
-            -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
-            -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER }}" \
-            -backend-config="key=${{ secrets.TF_STATE_KEY }}"
+        run: terraform init -backend-config="backend.conf"
 
       - name: Download Plan Artifact
         uses: actions/download-artifact@v4
@@ -242,7 +236,7 @@ jobs:
           echo "tenant_id=$(terraform output -raw tenant_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
 
   # =====================================================
-  # Job 4: Update Kubernetes Manifests
+  # Job 5: Update Kubernetes Manifests
   # =====================================================
   update-k8s-manifests:
     name: 'Update Kubernetes Manifests'
@@ -271,7 +265,7 @@ jobs:
           git push
 
   # =====================================================
-  # Job 5: Trigger Application Deployment
+  # Job 6: Trigger Application Deployment
   # =====================================================
   trigger-deploy:
     name: 'Trigger Application Deployment'
