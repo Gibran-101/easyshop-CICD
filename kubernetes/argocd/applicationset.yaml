@@ -1,0 +1,81 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: easyshop-infrastructure
+  namespace: argocd
+spec:
+  generators:
+  - list:
+      elements:
+      # Phase 1: Core Infrastructure
+      - name: cert-manager
+        namespace: cert-manager
+        chart: cert-manager
+        repoURL: https://charts.jetstack.io
+        version: v1.13.2
+        syncWave: "0"
+        values: |
+          installCRDs: true
+          global:
+            leaderElection:
+              namespace: cert-manager
+              
+      - name: ingress-nginx
+        namespace: ingress-nginx
+        chart: ingress-nginx
+        repoURL: https://kubernetes.github.io/ingress-nginx
+        version: 4.8.3
+        syncWave: "0"
+        values: |
+          controller:
+            service:
+              type: LoadBalancer
+              annotations:
+                service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: "/healthz"
+            metrics:
+              enabled: true
+            admissionWebhooks:
+              enabled: false
+              
+      # Phase 2: Security Infrastructure  
+      - name: azure-keyvault-csi-driver
+        namespace: kube-system
+        chart: csi-secrets-store-provider-azure
+        repoURL: https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+        version: 1.5.3
+        syncWave: "1"
+        values: |
+          secrets-store-csi-driver:
+            syncSecret:
+              enabled: true
+            enableSecretRotation: true
+            
+  template:
+    metadata:
+      name: '{{name}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{syncWave}}'
+    spec:
+      project: easyshop-project
+      source:
+        repoURL: '{{repoURL}}'
+        chart: '{{chart}}'
+        targetRevision: '{{version}}'
+        helm:
+          values: '{{values}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true
+        retry:
+          limit: 3
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
