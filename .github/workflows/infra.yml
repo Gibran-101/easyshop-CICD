@@ -134,6 +134,13 @@ jobs:
             backend.conf
           retention-days: 5
 
+      - name: Upload Terraform Cache Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-cache
+          path: ~/.terraform.d/plugin-cache
+          retention-days: 5
+
   # =====================================================
   # Job 3: Terraform Plan
   # =====================================================
@@ -155,10 +162,52 @@ jobs:
           name: terraform-config
           path: terraform/
 
+      - name: Download Terraform Cache
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-cache
+          path: ~/.terraform.d/plugin-cache
+
+      - name: Configure Terraform Plugin Cache
+        run: |
+          echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Cache Terraform
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            terraform/.terraform
+            terraform/.terraform.lock.hcl
+          key: ${{ runner.os }}-terraform-${{ hashFiles('terraform/.terraform.lock.hcl', 'terraform/**/*.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      - name: Configure Terraform Plugin Cache
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
+
+      - name: Cache Terraform
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            terraform/.terraform
+            terraform/.terraform.lock.hcl
+          key: ${{ runner.os }}-terraform-${{ hashFiles('terraform/.terraform.lock.hcl', 'terraform/**/*.tf') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
+      - name: Configure Terraform Plugin Cache
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
 
       - name: Terraform Init
         id: init
