@@ -1,9 +1,13 @@
 name: CI/CD Pipeline - Blue Green Deployment
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+  repository_dispatch:
+    types: [deploy-applications]
+  workflow_run:
+    workflows: ["Terraform Infrastructure Provisioning"]
+    types: [completed]
+    branches: [main]
 
 env:
   IMAGE_NAME: gibranf/easyshop
@@ -16,10 +20,12 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
+    # Only run if the triggering workflow succeeded (for workflow_run) or if manually triggered
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+    
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -44,45 +50,34 @@ jobs:
       with:
         ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-    #  FINAL STEP: SSH and deploy
     - name: Deploy on Remote VM via SSH
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.VM_USER }}@${{ secrets.VM_IP }} << 'EOF'
-
         # Set image tag
         IMAGE="${{ env.IMAGE_NAME }}:latest"
-
+        
         # Decide which deployment to update
-        CURRENT_COLOR=$(kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.K8S_NAMESPACE }} -o=jsonpath='{.spec.selector.app}')
-
+        CURRENT_COLOR=$(kubectl get svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -o=jsonpath='{.spec.selector.app}')
         if [ "$CURRENT_COLOR" == "${{ env.DEPLOYMENT_BLUE }}" ]; then
           NEW_DEPLOYMENT="${{ env.DEPLOYMENT_GREEN }}"
         else
           NEW_DEPLOYMENT="${{ env.DEPLOYMENT_BLUE }}"
         fi
-
+        
         # Update the deployment image
-        kubectl set image deployment/$NEW_DEPLOYMENT easyshop=$IMAGE -n ${{ env.K8S_NAMESPACE }}
-
+        kubectl set image deployment/$NEW_DEPLOYMENT easyshop=$IMAGE -n ${{ env.NAMESPACE }}
+        
         # Wait for rollout
-        kubectl rollout status deployment/$NEW_DEPLOYMENT -n ${{ env.K8S_NAMESPACE }}
-
+        kubectl rollout status deployment/$NEW_DEPLOYMENT -n ${{ env.NAMESPACE }}
+        
         # Update the service selector
-        kubectl patch svc ${{ env.SERVICE_NAME }} -n ${{ env.K8S_NAMESPACE }} -p "{\"spec\": {\"selector\": {\"app\": \"$NEW_DEPLOYMENT\"}}}"
-
+        kubectl patch svc ${{ env.SERVICE_NAME }} -n ${{ env.NAMESPACE }} -p "{\"spec\": {\"selector\": {\"app\": \"$NEW_DEPLOYMENT\"}}}"
+        
         # Optional: scale down old deployment
         if [ "$NEW_DEPLOYMENT" == "${{ env.DEPLOYMENT_GREEN }}" ]; then
-          kubectl scale deployment/${{ env.DEPLOYMENT_BLUE }} --replicas=0 -n ${{ env.K8S_NAMESPACE }}
+          kubectl scale deployment/${{ env.DEPLOYMENT_BLUE }} --replicas=0 -n ${{ env.NAMESPACE }}
         else
-          kubectl scale deployment/${{ env.DEPLOYMENT_GREEN }} --replicas=0 -n ${{ env.K8S_NAMESPACE }}
+          kubectl scale deployment/${{ env.DEPLOYMENT_GREEN }} --replicas=0 -n ${{ env.NAMESPACE }}
         fi
-
-        on:
-          workflow_dispatch:
-          workflow_run:
-            workflows: ["infra.yml"]
-            types:
-              - completed
-
-
         EOF
+        
