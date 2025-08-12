@@ -26,7 +26,7 @@ module "app_keyvault" {
   network_acls = {
     default_action             = "Allow" # Allow all for personal project
     bypass                     = "AzureServices"
-    ip_rules                   = var.allowed_ips # Add your home IP if you want
+    ip_rules                   = []
     virtual_network_subnet_ids = [module.networking.aks_subnet_id]
   }
 
