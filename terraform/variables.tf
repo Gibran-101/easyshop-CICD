@@ -73,12 +73,6 @@ variable "admin_object_id" {
   default     = ""
 }
 
-variable "allowed_ips" {
-  description = "List of IP addresses allowed to access Key Vault (optional)"
-  type        = list(string)
-  default     = []
-}
-
 # ========================================
 # UPDATES NEEDED IN: variables.tf (root module)
 # ========================================

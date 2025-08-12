@@ -32,7 +32,7 @@ variable "key_vault_id" {
 variable "kubernetes_version" {
   description = "Kubernetes version to use"
   type        = string
-  default     = "1.28.3" # Use latest stable version
+  default     = "1.30.0" # Use latest stable version
 }
 
 variable "node_count" {

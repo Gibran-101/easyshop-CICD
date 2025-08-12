@@ -35,7 +35,12 @@ variable "network_acls" {
     ip_rules                   = optional(list(string), [])
     virtual_network_subnet_ids = optional(list(string), [])
   })
-  default = null
+  default = {
+    default_action             = "Allow"
+    bypass                     = "AzureServices"
+    ip_rules                   = []
+    virtual_network_subnet_ids = []
+  }
 }
 
 variable "enable_diagnostics" {
