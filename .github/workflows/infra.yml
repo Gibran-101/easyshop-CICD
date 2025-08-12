@@ -105,7 +105,6 @@ jobs:
 
           # Optional configurations
           admin_object_id = "${{ secrets.TF_ADMIN_OBJECT_ID }}"
-          allowed_ips = ${{ secrets.TF_ALLOWED_IPS }}
 
           # Tags
           tags = {
