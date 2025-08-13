@@ -48,10 +48,11 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
   skip_service_principal_aad_check = true
 }
 
-# Optional: Grant AKS access to Key Vault
+#Grant AKS access to Key Vault
 resource "azurerm_role_assignment" "aks_keyvault_reader" {
-  count                = var.key_vault_id != "" ? 1 : 0
   principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
   role_definition_name = "Key Vault Secrets User"
   scope                = var.key_vault_id
+
+  depends_on = [azurerm_kubernetes_cluster.aks]
 }
