@@ -22,79 +22,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create terraform configuration
-        env:
-          TF_PROJECT_NAME: ${{ secrets.TF_PROJECT_NAME }}
-          TF_LOCATION: ${{ secrets.TF_LOCATION }}
-          TF_ACR_NAME: ${{ secrets.TF_ACR_NAME }}
-          TF_AKS_CLUSTER_NAME: ${{ secrets.TF_AKS_CLUSTER_NAME }}
-          TF_DNS_ZONE_NAME: ${{ secrets.TF_DNS_ZONE_NAME }}
-          TF_ARGOCD_NAMESPACE: ${{ secrets.TF_ARGOCD_NAMESPACE }}
-          TF_GITHUB_REPO_URL: ${{ secrets.TF_GITHUB_REPO_URL }}
-          TF_OBSERVABILITY_NAMESPACE: ${{ secrets.TF_OBSERVABILITY_NAMESPACE }}
-          TF_ADMIN_OBJECT_ID: ${{ secrets.TF_ADMIN_OBJECT_ID }}
-          TF_OWNER: ${{ secrets.TF_OWNER }}
-          TF_STATE_RESOURCE_GROUP: ${{ secrets.TF_STATE_RESOURCE_GROUP }}
-          TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
-          TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
-          TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
         run: |
-          # Fix UUID format if hyphens are missing
-          FIXED_OBJECT_ID="${TF_ADMIN_OBJECT_ID}"
-          
-          # Check if it's a 32-char string without hyphens (typical UUID without formatting)
-          if [[ ${#FIXED_OBJECT_ID} -eq 32 && $FIXED_OBJECT_ID =~ ^[a-fA-F0-9]{32}$ ]]; then
-            echo "Detected UUID without hyphens, adding them..."
-            # Insert hyphens at positions 8, 12, 16, 20 to format as UUID
-            FIXED_OBJECT_ID="${FIXED_OBJECT_ID:0:8}-${FIXED_OBJECT_ID:8:4}-${FIXED_OBJECT_ID:12:4}-${FIXED_OBJECT_ID:16:4}-${FIXED_OBJECT_ID:20:12}"
-            echo "Fixed UUID: $FIXED_OBJECT_ID"
-          fi
-          
-          # Set default for observability namespace if empty
-          OBSERVABILITY_NS="${TF_OBSERVABILITY_NAMESPACE:-monitoring}"
-          
-          # Create terraform.tfvars with proper syntax - FIXED TAGS BLOCK
           cat > terraform.tfvars << EOF
-          project_name = "${TF_PROJECT_NAME}"
-          location     = "${TF_LOCATION}"
-          acr_name = "${TF_ACR_NAME}"
-          aks_cluster_name = "${TF_AKS_CLUSTER_NAME}"
-          dns_zone_name = "${TF_DNS_ZONE_NAME}"
-          argocd_namespace = "${TF_ARGOCD_NAMESPACE}"
-          github_repo_url  = "${TF_GITHUB_REPO_URL}"
-          observability_namespace = "${OBSERVABILITY_NS}"
-          admin_object_id = "${FIXED_OBJECT_ID}"
+          project_name = "${{ secrets.TF_PROJECT_NAME }}"
+          location     = "${{ secrets.TF_LOCATION }}"
+          acr_name = "${{ secrets.TF_ACR_NAME }}"
+          aks_cluster_name = "${{ secrets.TF_AKS_CLUSTER_NAME }}"
+          dns_zone_name = "${{ secrets.TF_DNS_ZONE_NAME }}"
+          argocd_namespace = "${{ secrets.TF_ARGOCD_NAMESPACE }}"
+          github_repo_url  = "${{ secrets.TF_GITHUB_REPO_URL }}"
+          observability_namespace = "${{ secrets.TF_OBSERVABILITY_NAMESPACE }}"
+          admin_object_id = "${{ secrets.TF_ADMIN_OBJECT_ID }}"
           tags = {
-            "Project"   = "EasyShop"
-            "ManagedBy" = "Terraform"
-            "Owner"     = "${TF_OWNER}"
+            Project   = "EasyShop"
+            ManagedBy = "Terraform"
+            Owner     = "${{ secrets.TF_OWNER }}"
           }
           EOF
           
-          # Create backend configuration
           cat > backend.conf << EOF
-          resource_group_name  = "${TF_STATE_RESOURCE_GROUP}"
-          storage_account_name = "${TF_STATE_STORAGE_ACCOUNT}"
-          container_name       = "${TF_STATE_CONTAINER}"
-          key                  = "${TF_STATE_KEY}"
+          resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+          storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+          container_name       = "${{ secrets.TF_STATE_CONTAINER }}"
+          key                  = "${{ secrets.TF_STATE_KEY }}"
           EOF
-          
-          # Clean up any potential line breaks
-          sed -i 's/\r$//' terraform.tfvars
-          sed -i 's/\r$//' backend.conf
-          
-          # Debug output (sanitized)
-          echo "=== terraform.tfvars content (sanitized) ==="
-          sed 's/= ".*"/= "***"/g' terraform.tfvars
-          
-          # Validate terraform.tfvars syntax
-          echo "=== Validating terraform.tfvars syntax ==="
-          if grep -q 'tags = {' terraform.tfvars && grep -q '"Project"' terraform.tfvars; then
-            echo "✅ Tags block syntax looks good"
-          else
-            echo "❌ Tags block malformed"
-            cat terraform.tfvars
-            exit 1
-          fi
 
       - name: Upload configuration artifacts
         uses: actions/upload-artifact@v4
@@ -130,28 +81,11 @@ jobs:
             terraform/.terraform.lock.hcl
           key: ${{ runner.os }}-terraform-${{ hashFiles('terraform/.terraform.lock.hcl', 'terraform/**/*.tf') }}
           restore-keys: ${{ runner.os }}-terraform-
-      - name: Debug and validate terraform.tfvars
-        run: |
-          echo "=== terraform.tfvars content check ==="
-          if [ -f terraform.tfvars ]; then
-            echo "File exists, showing line numbers:"
-            cat -n terraform.tfvars
-            echo ""
-            echo "✅ terraform.tfvars syntax should now be correct"
-          else
-            echo "❌ terraform.tfvars not found!"
-            exit 1
-          fi
-      - name: Configure Terraform cache & init with auto-unlock
+      - name: Configure Terraform cache & init
         run: |
           mkdir -p ~/.terraform.d/plugin-cache
           echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
           terraform init -backend-config="backend.conf"
-          
-          # Try to force unlock the specific stuck lock
-          echo "Attempting to unlock stuck state..."
-          terraform force-unlock -force a7a82cd0-608f-5474-bc5f-4f1f09bd1356 || echo "No lock found or unlock failed (this is okay)"
-          
           terraform validate
       - name: Terraform Plan
         run: terraform plan -var-file="terraform.tfvars" -out=tfplan -no-color
