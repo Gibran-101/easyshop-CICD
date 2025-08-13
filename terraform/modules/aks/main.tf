@@ -10,12 +10,12 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   # The default node pool - where your apps run
   default_node_pool {
-    name                 = "default"
-    node_count           = var.node_count      
-    vm_size              = var.vm_size          
-    type                 = "VirtualMachineScaleSets"
-    os_disk_size_gb      = 30
-    vnet_subnet_id       = var.vnet_subnet_id
+    name            = "default"
+    node_count      = var.node_count
+    vm_size         = var.vm_size
+    type            = "VirtualMachineScaleSets"
+    os_disk_size_gb = 30
+    vnet_subnet_id  = var.vnet_subnet_id
     # orchestrator_version = "1.29.0"     
     node_labels = {
       environment = "dev"

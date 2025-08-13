@@ -93,27 +93,45 @@ resource "azurerm_public_ip" "ingress_ip" {
   depends_on = [module.networking] # Only depends on networking
 }
 
-resource "helm_release" "nginx_ingress_controller" {
-  name       = "ingress-nginx"
-  repository = "https://kubernetes.github.io/ingress-nginx"
-  chart      = "ingress-nginx"
-  version    = "4.8.3"
-  namespace  = "ingress-nginx"
+# resource "helm_release" "nginx_ingress_controller" {
+#   name       = "ingress-nginx"
+#   repository = "https://kubernetes.github.io/ingress-nginx"
+#   chart      = "ingress-nginx"
+#   version    = "4.8.3"
+#   namespace  = "ingress-nginx"
 
-  create_namespace = true
+#   create_namespace = true
 
-  # Use the static IP
-  set {
-    name  = "controller.service.loadBalancerIP"
-    value = azurerm_public_ip.ingress_ip.ip_address
+#   # Use the static IP
+#   set {
+#     name  = "controller.service.loadBalancerIP"
+#     value = azurerm_public_ip.ingress_ip.ip_address
+#   }
+
+#   # Tell Azure which resource group has the IP
+#   set {
+#     name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-resource-group"
+#     value = module.networking.resource_group_name
+#   }
+#   depends_on = [module.aks, azurerm_public_ip.ingress_ip] # Depends on AKS and Static IP
+# }
+
+# =======================
+# NGINX Installation via Script
+# =======================
+resource "null_resource" "install_nginx_ingress" {
+  depends_on = [module.aks, azurerm_public_ip.ingress_ip]
+
+  provisioner "local-exec" {
+    command = "${path.module}/scripts/install-nginx.sh ${azurerm_public_ip.ingress_ip.ip_address} ${module.networking.resource_group_name} ${module.aks.cluster_name}"
   }
 
-  # Tell Azure which resource group has the IP
-  set {
-    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-resource-group"
-    value = module.networking.resource_group_name
+  # Trigger re-run if any of these change
+  triggers = {
+    static_ip = azurerm_public_ip.ingress_ip.ip_address
+    cluster_id = module.aks.cluster_id
+    script_hash = filemd5("${path.module}/scripts/install-nginx.sh")
   }
-  depends_on = [module.aks, azurerm_public_ip.ingress_ip] # Depends on AKS and Static IP
 }
 
 # Get the LoadBalancer details
