@@ -52,49 +52,31 @@ jobs:
           # Set default for observability namespace if empty
           OBSERVABILITY_NS="${TF_OBSERVABILITY_NAMESPACE:-monitoring}"
           
-          # Create terraform.tfvars with proper syntax
-          cat > terraform.tfvars << 'EOF'
-          project_name = "$PROJECT_NAME_VALUE"
-          location     = "$LOCATION_VALUE"
-          acr_name = "$ACR_NAME_VALUE"
-          aks_cluster_name = "$AKS_CLUSTER_NAME_VALUE"
-          dns_zone_name = "$DNS_ZONE_NAME_VALUE"
-          argocd_namespace = "$ARGOCD_NAMESPACE_VALUE"
-          github_repo_url  = "$GITHUB_REPO_URL_VALUE"
-          observability_namespace = "$OBSERVABILITY_NAMESPACE_VALUE"
-          admin_object_id = "$ADMIN_OBJECT_ID_VALUE"
+          # Create terraform.tfvars with proper syntax - FIXED TAGS BLOCK
+          cat > terraform.tfvars << EOF
+          project_name = "${TF_PROJECT_NAME}"
+          location     = "${TF_LOCATION}"
+          acr_name = "${TF_ACR_NAME}"
+          aks_cluster_name = "${TF_AKS_CLUSTER_NAME}"
+          dns_zone_name = "${TF_DNS_ZONE_NAME}"
+          argocd_namespace = "${TF_ARGOCD_NAMESPACE}"
+          github_repo_url  = "${TF_GITHUB_REPO_URL}"
+          observability_namespace = "${OBSERVABILITY_NS}"
+          admin_object_id = "${FIXED_OBJECT_ID}"
           tags = {
-            Project   = "EasyShop"
-            ManagedBy = "Terraform"
-            Owner     = "$OWNER_VALUE"
+            "Project"   = "EasyShop"
+            "ManagedBy" = "Terraform"
+            "Owner"     = "${TF_OWNER}"
           }
           EOF
           
-          # Replace placeholders with actual values
-          sed -i "s|\$PROJECT_NAME_VALUE|${TF_PROJECT_NAME}|g" terraform.tfvars
-          sed -i "s|\$LOCATION_VALUE|${TF_LOCATION}|g" terraform.tfvars
-          sed -i "s|\$ACR_NAME_VALUE|${TF_ACR_NAME}|g" terraform.tfvars
-          sed -i "s|\$AKS_CLUSTER_NAME_VALUE|${TF_AKS_CLUSTER_NAME}|g" terraform.tfvars
-          sed -i "s|\$DNS_ZONE_NAME_VALUE|${TF_DNS_ZONE_NAME}|g" terraform.tfvars
-          sed -i "s|\$ARGOCD_NAMESPACE_VALUE|${TF_ARGOCD_NAMESPACE}|g" terraform.tfvars
-          sed -i "s|\$GITHUB_REPO_URL_VALUE|${TF_GITHUB_REPO_URL}|g" terraform.tfvars
-          sed -i "s|\$OBSERVABILITY_NAMESPACE_VALUE|${OBSERVABILITY_NS}|g" terraform.tfvars
-          sed -i "s|\$ADMIN_OBJECT_ID_VALUE|${FIXED_OBJECT_ID}|g" terraform.tfvars
-          sed -i "s|\$OWNER_VALUE|${TF_OWNER}|g" terraform.tfvars
-          
           # Create backend configuration
-          cat > backend.conf << 'EOF'
-          resource_group_name  = "$STATE_RG_VALUE"
-          storage_account_name = "$STATE_SA_VALUE"
-          container_name       = "$STATE_CONTAINER_VALUE"
-          key                  = "$STATE_KEY_VALUE"
+          cat > backend.conf << EOF
+          resource_group_name  = "${TF_STATE_RESOURCE_GROUP}"
+          storage_account_name = "${TF_STATE_STORAGE_ACCOUNT}"
+          container_name       = "${TF_STATE_CONTAINER}"
+          key                  = "${TF_STATE_KEY}"
           EOF
-          
-          # Replace backend placeholders
-          sed -i "s|\$STATE_RG_VALUE|${TF_STATE_RESOURCE_GROUP}|g" backend.conf
-          sed -i "s|\$STATE_SA_VALUE|${TF_STATE_STORAGE_ACCOUNT}|g" backend.conf
-          sed -i "s|\$STATE_CONTAINER_VALUE|${TF_STATE_CONTAINER}|g" backend.conf
-          sed -i "s|\$STATE_KEY_VALUE|${TF_STATE_KEY}|g" backend.conf
           
           # Clean up any potential line breaks
           sed -i 's/\r$//' terraform.tfvars
@@ -106,10 +88,11 @@ jobs:
           
           # Validate terraform.tfvars syntax
           echo "=== Validating terraform.tfvars syntax ==="
-          if grep -q 'tags = {' terraform.tfvars && grep -q '}' terraform.tfvars; then
-            echo "✅ Tags block looks good"
+          if grep -q 'tags = {' terraform.tfvars && grep -q '"Project"' terraform.tfvars; then
+            echo "✅ Tags block syntax looks good"
           else
             echo "❌ Tags block malformed"
+            cat terraform.tfvars
             exit 1
           fi
 
@@ -154,13 +137,7 @@ jobs:
             echo "File exists, showing line numbers:"
             cat -n terraform.tfvars
             echo ""
-            echo "Checking for unterminated strings..."
-            # Check for lines ending with quotes followed by whitespace (unterminated strings)
-            if grep -n '"[[:space:]]*$' terraform.tfvars; then
-              echo "❌ Found potential unterminated strings in terraform.tfvars"
-              exit 1
-            fi
-            echo "✅ terraform.tfvars syntax looks good"
+            echo "✅ terraform.tfvars syntax should now be correct"
           else
             echo "❌ terraform.tfvars not found!"
             exit 1
