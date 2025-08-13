@@ -7,6 +7,11 @@ on:
         description: 'Type "DESTROY" to confirm deletion of all resources'
         required: true
         type: string
+      reset_state:
+        description: 'Also delete Terraform state file? (yes/no)'
+        required: false
+        default: 'no'
+        type: string
 
 env:
   TERRAFORM_VERSION: '1.6.0'
@@ -23,91 +28,20 @@ jobs:
       - name: Validate confirmation & final warning
         run: |
           if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
-            echo " Invalid confirmation. You must type 'DESTROY' exactly."
+            echo "❌ Invalid confirmation. You must type 'DESTROY' exactly."
             exit 1
           fi
-          echo " WARNING: This will permanently delete all infrastructure"
-          echo " Starting destruction in 10 seconds..."
+          echo "⚠️ WARNING: This will permanently delete all infrastructure"
+          if [ "${{ github.event.inputs.reset_state }}" == "yes" ]; then
+            echo "⚠️ WARNING: This will also delete the Terraform state file!"
+          fi
+          echo "🕐 Starting destruction in 10 seconds..."
           sleep 10
 
-  prepare-destroy-config:
-    name: 'Prepare Terraform Configuration'
+  nuclear-cleanup:
+    name: 'Nuclear Option - Complete Cleanup'
     runs-on: ubuntu-latest
     needs: safety-check
-    steps:
-      - name: Create terraform configuration
-        run: |
-          cat > terraform.tfvars << EOF
-          project_name = "${{ secrets.TF_PROJECT_NAME }}"
-          location     = "${{ secrets.TF_LOCATION }}"
-          acr_name = "${{ secrets.TF_ACR_NAME }}"
-          aks_cluster_name = "${{ secrets.TF_AKS_CLUSTER_NAME }}"
-          dns_zone_name = "${{ secrets.TF_DNS_ZONE_NAME }}"
-          argocd_namespace = "${{ secrets.TF_ARGOCD_NAMESPACE }}"
-          github_repo_url  = "${{ secrets.TF_GITHUB_REPO_URL }}"
-          observability_namespace = "${{ secrets.TF_OBSERVABILITY_NAMESPACE }}"
-          admin_object_id = "${{ secrets.TF_ADMIN_OBJECT_ID }}"
-          tags = {
-            Project   = "EasyShop"
-            ManagedBy = "Terraform"
-            Owner     = "${{ secrets.TF_OWNER }}"
-          }
-          EOF
-          
-          cat > backend.conf << EOF
-          resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
-          storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
-          container_name       = "${{ secrets.TF_STATE_CONTAINER }}"
-          key                  = "${{ secrets.TF_STATE_KEY }}"
-          EOF
-
-      - name: Upload configuration artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-destroy-config
-          path: |
-            terraform.tfvars
-            backend.conf
-          retention-days: 1
-
-  terraform-destroy:
-    name: 'Terraform Destroy'
-    runs-on: ubuntu-latest
-    needs: prepare-destroy-config
-    defaults:
-      run:
-        working-directory: terraform
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: terraform-destroy-config
-          path: terraform/
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-      - name: Cache Terraform
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.terraform.d/plugin-cache
-            terraform/.terraform
-            terraform/.terraform.lock.hcl
-          key: ${{ runner.os }}-terraform-${{ hashFiles('terraform/.terraform.lock.hcl', 'terraform/**/*.tf') }}
-          restore-keys: ${{ runner.os }}-terraform-
-      - name: Configure cache, init & destroy
-        run: |
-          mkdir -p ~/.terraform.d/plugin-cache
-          echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
-          terraform init -backend-config="backend.conf"
-          echo " Executing terraform destroy with auto-approval..."
-          terraform destroy -var-file="terraform.tfvars" -auto-approve
-
-  verify-destruction:
-    name: 'Verify Complete Destruction'
-    runs-on: ubuntu-latest
-    needs: terraform-destroy
-    if: always() && needs.terraform-destroy.result == 'success'
     steps:
       - name: Azure CLI Login
         uses: azure/login@v2
@@ -119,15 +53,83 @@ jobs:
               "subscriptionId": "${{ secrets.ARM_SUBSCRIPTION_ID }}",
               "tenantId": "${{ secrets.ARM_TENANT_ID }}"
             }
+      
+      - name: Complete Infrastructure Cleanup
+        run: |
+          echo "🧹 Starting complete cleanup..."
+          
+          # Delete all resource groups related to the project
+          echo "🗑️ Deleting resource groups..."
+          az group delete --name "${{ secrets.TF_PROJECT_NAME }}-rg" --yes --no-wait || echo "Main resource group already deleted"
+          
+          # Wait a bit for resource group deletion to start
+          sleep 30
+          
+          # Force delete the Terraform state if requested
+          if [ "${{ github.event.inputs.reset_state }}" == "yes" ]; then
+            echo "🗑️ Deleting Terraform state file..."
+            az storage blob delete \
+              --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+              --container-name "${{ secrets.TF_STATE_CONTAINER }}" \
+              --name "${{ secrets.TF_STATE_KEY }}" || echo "State file already deleted"
+            
+            # Delete any lock files
+            az storage blob delete \
+              --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+              --container-name "${{ secrets.TF_STATE_CONTAINER }}" \
+              --name "${{ secrets.TF_STATE_KEY }}.lock" || echo "Lock file already deleted"
+          fi
+          
+          echo "✅ Nuclear cleanup completed!"
+
+  verify-destruction:
+    name: 'Verify Complete Destruction'
+    runs-on: ubuntu-latest
+    needs: nuclear-cleanup
+    if: always() && needs.nuclear-cleanup.result == 'success'
+    steps:
+      - name: Azure CLI Login
+        uses: azure/login@v2
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.ARM_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.ARM_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.ARM_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.ARM_TENANT_ID }}"
+            }
+      
       - name: Verify cleanup & report completion
         run: |
-          echo " Checking cleanup status..."
+          echo "🔍 Checking cleanup status..."
+          
+          # Check for remaining resource groups
           REMAINING=$(az group list --query "[?contains(name, '${{ secrets.TF_PROJECT_NAME }}')].name" -o tsv || echo "")
           if [ -n "$REMAINING" ]; then
-            echo " Some resource groups may still exist: $REMAINING"
-            echo " These may be managed outside Terraform or need manual cleanup"
+            echo "⚠️ Some resource groups may still exist: $REMAINING"
+            echo "⏳ These are likely still being deleted (async operation)"
           else
-            echo " No matching resource groups found"
+            echo "✅ No matching resource groups found"
           fi
-          echo " Infrastructure destruction completed by ${{ github.actor }}"
-          echo " Destroyed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          
+          # Check if state file was deleted
+          if [ "${{ github.event.inputs.reset_state }}" == "yes" ]; then
+            echo "🔍 Checking if state file was deleted..."
+            if az storage blob exists \
+                --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+                --container-name "${{ secrets.TF_STATE_CONTAINER }}" \
+                --name "${{ secrets.TF_STATE_KEY }}" --query "exists" -o tsv | grep -q "true"; then
+              echo "⚠️ State file still exists"
+            else
+              echo "✅ State file successfully deleted"
+            fi
+          fi
+          
+          echo ""
+          echo "🎉 Infrastructure destruction completed!"
+          echo "👤 Destroyed by: ${{ github.actor }}"
+          echo "🕐 Destroyed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo ""
+          if [ "${{ github.event.inputs.reset_state }}" == "yes" ]; then
+            echo "🚀 Ready for fresh deployment with infra.yml!"
+          fi
