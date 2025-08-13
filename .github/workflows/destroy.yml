@@ -10,7 +10,7 @@ on:
       reset_state:
         description: 'Also delete Terraform state file? (yes/no)'
         required: false
-        default: 'no'
+        default: 'yes'
         type: string
 
 env:
@@ -54,33 +54,76 @@ jobs:
               "tenantId": "${{ secrets.ARM_TENANT_ID }}"
             }
       
-      - name: Complete Infrastructure Cleanup
+      - name: Force Delete All Related Resource Groups
         run: |
-          echo "🧹 Starting complete cleanup..."
+          echo "🧹 Starting aggressive cleanup..."
           
-          # Delete all resource groups related to the project
-          echo "🗑️ Deleting resource groups..."
-          az group delete --name "${{ secrets.TF_PROJECT_NAME }}-rg" --yes --no-wait || echo "Main resource group already deleted"
+          # Get all resource groups that match our project
+          PROJECT_NAME="${{ secrets.TF_PROJECT_NAME }}"
+          echo "🔍 Looking for resource groups containing: $PROJECT_NAME"
           
-          # Wait a bit for resource group deletion to start
-          sleep 30
+          # Find all related resource groups (including MC_ groups from AKS)
+          RESOURCE_GROUPS=$(az group list --query "[?contains(name, '$PROJECT_NAME')].name" -o tsv)
           
-          # Force delete the Terraform state if requested
+          if [ -n "$RESOURCE_GROUPS" ]; then
+            echo "🗑️ Found resource groups to delete:"
+            echo "$RESOURCE_GROUPS"
+            
+            # Delete each resource group with force
+            echo "$RESOURCE_GROUPS" | while read -r RG; do
+              if [ -n "$RG" ]; then
+                echo "🗑️ Force deleting resource group: $RG"
+                az group delete --name "$RG" --yes --no-wait --force-deletion-types Microsoft.Compute/virtualMachines,Microsoft.Compute/virtualMachineScaleSets || echo "Failed to delete $RG (might already be deleted)"
+              fi
+            done
+          else
+            echo "✅ No resource groups found matching: $PROJECT_NAME"
+          fi
+          
+          # Also try to delete the main resource group explicitly
+          echo "🗑️ Attempting to delete main resource group..."
+          az group delete --name "${PROJECT_NAME}-rg" --yes --no-wait --force-deletion-types Microsoft.Compute/virtualMachines,Microsoft.Compute/virtualMachineScaleSets || echo "Main RG already deleted or doesn't exist"
+
+      - name: Force Delete Terraform State File
+        run: |
           if [ "${{ github.event.inputs.reset_state }}" == "yes" ]; then
-            echo "🗑️ Deleting Terraform state file..."
+            echo "🗑️ Force deleting Terraform state file..."
+            
+            # Set Azure Storage environment variables for authentication
+            export AZURE_STORAGE_ACCOUNT="${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+            export AZURE_STORAGE_KEY=$(az storage account keys list \
+              --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+              --resource-group "${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+              --query "[0].value" -o tsv)
+            
+            # Delete the state file with proper authentication
             az storage blob delete \
               --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
               --container-name "${{ secrets.TF_STATE_CONTAINER }}" \
-              --name "${{ secrets.TF_STATE_KEY }}" || echo "State file already deleted"
+              --name "${{ secrets.TF_STATE_KEY }}" \
+              --auth-mode key || echo "State file already deleted or doesn't exist"
             
             # Delete any lock files
             az storage blob delete \
               --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
               --container-name "${{ secrets.TF_STATE_CONTAINER }}" \
-              --name "${{ secrets.TF_STATE_KEY }}.lock" || echo "Lock file already deleted"
+              --name "${{ secrets.TF_STATE_KEY }}.lock" \
+              --auth-mode key || echo "Lock file already deleted or doesn't exist"
+            
+            # Also try the lock file with the UUID we saw earlier
+            az storage blob delete \
+              --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+              --container-name "${{ secrets.TF_STATE_CONTAINER }}" \
+              --name "terraform.tfstate.lock" \
+              --auth-mode key || echo "Generic lock file already deleted or doesn't exist"
+            
+            echo "✅ Terraform state deletion completed!"
           fi
-          
-          echo "✅ Nuclear cleanup completed!"
+
+      - name: Wait for Resource Group Deletions
+        run: |
+          echo "⏳ Waiting 2 minutes for resource group deletions to propagate..."
+          sleep 120
 
   verify-destruction:
     name: 'Verify Complete Destruction'
@@ -99,37 +142,50 @@ jobs:
               "tenantId": "${{ secrets.ARM_TENANT_ID }}"
             }
       
-      - name: Verify cleanup & report completion
+      - name: Final Verification
         run: |
-          echo "🔍 Checking cleanup status..."
+          echo "🔍 Final cleanup verification..."
           
           # Check for remaining resource groups
-          REMAINING=$(az group list --query "[?contains(name, '${{ secrets.TF_PROJECT_NAME }}')].name" -o tsv || echo "")
+          PROJECT_NAME="${{ secrets.TF_PROJECT_NAME }}"
+          REMAINING=$(az group list --query "[?contains(name, '$PROJECT_NAME')].name" -o tsv || echo "")
+          
           if [ -n "$REMAINING" ]; then
-            echo "⚠️ Some resource groups may still exist: $REMAINING"
-            echo "⏳ These are likely still being deleted (async operation)"
+            echo "⚠️ Some resource groups still exist (may still be deleting):"
+            echo "$REMAINING"
           else
-            echo "✅ No matching resource groups found"
+            echo "✅ All resource groups successfully deleted!"
           fi
           
           # Check if state file was deleted
           if [ "${{ github.event.inputs.reset_state }}" == "yes" ]; then
-            echo "🔍 Checking if state file was deleted..."
+            echo "🔍 Verifying state file deletion..."
+            
+            # Get storage account key for verification
+            STORAGE_KEY=$(az storage account keys list \
+              --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+              --resource-group "${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+              --query "[0].value" -o tsv)
+            
             if az storage blob exists \
                 --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
                 --container-name "${{ secrets.TF_STATE_CONTAINER }}" \
-                --name "${{ secrets.TF_STATE_KEY }}" --query "exists" -o tsv | grep -q "true"; then
-              echo "⚠️ State file still exists"
+                --name "${{ secrets.TF_STATE_KEY }}" \
+                --account-key "$STORAGE_KEY" \
+                --query "exists" -o tsv | grep -q "true"; then
+              echo "⚠️ State file still exists - manual deletion may be needed"
             else
-              echo "✅ State file successfully deleted"
+              echo "✅ State file successfully deleted!"
             fi
           fi
           
           echo ""
-          echo "🎉 Infrastructure destruction completed!"
-          echo "👤 Destroyed by: ${{ github.actor }}"
-          echo "🕐 Destroyed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎉 Nuclear cleanup completed!"
+          echo "👤 Executed by: ${{ github.actor }}"
+          echo "🕐 Completed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo ""
           if [ "${{ github.event.inputs.reset_state }}" == "yes" ]; then
-            echo "🚀 Ready for fresh deployment with infra.yml!"
+            echo "🚀 Ready for completely fresh deployment!"
+            echo "💡 Run infra.yml workflow to start from scratch"
           fi
+          
