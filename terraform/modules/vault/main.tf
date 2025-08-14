@@ -69,19 +69,19 @@ resource "azurerm_key_vault" "this" {
 }
 
 # Optional: Add diagnostic settings for monitoring
-resource "azurerm_monitor_diagnostic_setting" "keyvault" {
-  count              = var.enable_diagnostics ? 1 : 0
-  name               = "${var.key_vault_name}-diagnostics"
-  target_resource_id = azurerm_key_vault.this.id
+# resource "azurerm_monitor_diagnostic_setting" "keyvault" {
+#   count              = var.enable_diagnostics ? 1 : 0
+#   name               = "${var.key_vault_name}-diagnostics"
+#   target_resource_id = azurerm_key_vault.this.id
 
-  # Send logs to Log Analytics if workspace ID is provided
-  log_analytics_workspace_id = var.log_analytics_workspace_id
+#   # Send logs to Log Analytics if workspace ID is provided
+#   log_analytics_workspace_id = var.log_analytics_workspace_id
 
-  enabled_log {
-    category = "AuditEvent"
-  }
+#   enabled_log {
+#     category = "AuditEvent"
+#   }
 
-  metric {
-    category = "AllMetrics"
-  }
-}
+#   metric {
+#     category = "AllMetrics"
+#   }
+# }
