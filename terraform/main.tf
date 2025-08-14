@@ -130,6 +130,23 @@ resource "azurerm_public_ip" "ingress_ip" {
 #   depends_on = [null_resource.install_nginx_ingress]
 # }
 
+# =======================
+# Traefik Ingress Installation (Fast & Reliable)
+# =======================
+resource "null_resource" "install_traefik_ingress" {
+  provisioner "local-exec" {
+    command = "${path.module}/../scripts/install-traefik.sh ${azurerm_public_ip.ingress_ip.ip_address} ${module.networking.resource_group_name} ${var.aks_cluster_name}"
+  }
+  
+  depends_on = [module.aks, azurerm_public_ip.ingress_ip]
+  
+  # Trigger re-run when these change
+  triggers = {
+    static_ip = azurerm_public_ip.ingress_ip.ip_address
+    cluster_id = module.aks.cluster_id
+  }
+}
+
 
 # =======================
 # Module: DNS (Azure DNS)

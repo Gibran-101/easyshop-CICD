@@ -4,16 +4,15 @@ metadata:
   name: easyshop-ingress
   namespace: easyshop
   annotations:
-    # Use NGINX ingress controller
-    kubernetes.io/ingress.class: "nginx"
+    # Use Traefik ingress controller
+    kubernetes.io/ingress.class: "traefik"
     
     # SSL/TLS configuration with Let's Encrypt
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     
-    # NGINX specific settings
-    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
-    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Traefik specific settings
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
     
 spec:
   tls:
@@ -22,7 +21,7 @@ spec:
     secretName: easyshop-tls-cert
   
   rules:
-  # Main application domain - no subdomains needed
+  # Main application domain
   - host: "buildandship.space"
     http:
       paths:
