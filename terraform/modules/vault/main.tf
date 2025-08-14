@@ -6,12 +6,12 @@ resource "azurerm_key_vault" "this" {
   tenant_id           = var.tenant_id
   sku_name            = "standard"
 
-  # Security settings
+  # Security settings - SOFT DELETE DISABLED
   enabled_for_disk_encryption     = true
   enabled_for_deployment          = true
   enabled_for_template_deployment = true
-  purge_protection_enabled        = true # Prevents accidental deletion
-  soft_delete_retention_days      = 90   # Can recover deleted vault for 90 days
+  purge_protection_enabled        = false  # Disabled purge protection
+  soft_delete_retention_days      = 7      # Minimum allowed, but we'll disable it via provider
 
   # Access policy for the current user/service principal
   access_policy {

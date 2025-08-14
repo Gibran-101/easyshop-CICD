@@ -37,7 +37,7 @@ resource "random_password" "redis_password" {
 
 # Store MongoDB credentials in Azure Key Vault
 resource "azurerm_key_vault_secret" "mongodb_username" {
-  name         = "mongodb-username"
+  name         = "es-mongodb-username"
   value        = "mongouser${random_string.mongodb_username.result}"
   key_vault_id = var.key_vault_id
 
@@ -45,7 +45,7 @@ resource "azurerm_key_vault_secret" "mongodb_username" {
 }
 
 resource "azurerm_key_vault_secret" "mongodb_password" {
-  name         = "mongodb-password"
+  name         = "es-mongodb-password"
   value        = random_password.mongodb_password.result
   key_vault_id = var.key_vault_id
 
@@ -53,7 +53,7 @@ resource "azurerm_key_vault_secret" "mongodb_password" {
 }
 
 resource "azurerm_key_vault_secret" "mongodb_database" {
-  name         = "mongodb-database"
+  name         = "es-mongodb-database"
   value        = "easyshop"
   key_vault_id = var.key_vault_id
 
@@ -62,7 +62,7 @@ resource "azurerm_key_vault_secret" "mongodb_database" {
 
 # Complete MongoDB connection string with authentication
 resource "azurerm_key_vault_secret" "mongodb_uri" {
-  name         = "mongodb-connection-string"
+  name         = "es-mongodb-uri"
   value        = "mongodb://${azurerm_key_vault_secret.mongodb_username.value}:${azurerm_key_vault_secret.mongodb_password.value}@mongodb-0.mongodb-service.easyshop.svc.cluster.local:27017/easyshop?authSource=admin"
   key_vault_id = var.key_vault_id
 
@@ -76,7 +76,7 @@ resource "azurerm_key_vault_secret" "mongodb_uri" {
 
 # Store Redis credentials in Key Vault
 resource "azurerm_key_vault_secret" "redis_password" {
-  name         = "redis-password"
+  name         = "es-redis-password"
   value        = random_password.redis_password.result
   key_vault_id = var.key_vault_id
 
@@ -85,7 +85,7 @@ resource "azurerm_key_vault_secret" "redis_password" {
 
 # Redis connection string with password
 resource "azurerm_key_vault_secret" "redis_uri" {
-  name         = "redis-connection-string"
+  name         = "es-redis-uri"
   value        = "redis://:${azurerm_key_vault_secret.redis_password.value}@easyshop-redis.easyshop.svc.cluster.local:6379"
   key_vault_id = var.key_vault_id
 
