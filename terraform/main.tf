@@ -123,14 +123,14 @@ resource "null_resource" "install_nginx_ingress" {
   depends_on = [module.aks, azurerm_public_ip.ingress_ip]
 
   provisioner "local-exec" {
-    command = "${path.module}/scripts/install-nginx.sh ${azurerm_public_ip.ingress_ip.ip_address} ${module.networking.resource_group_name} ${module.aks.cluster_name}"
-  }
+  command = "${path.root}/scripts/install-nginx.sh ${azurerm_public_ip.ingress_ip.ip_address} ${module.networking.resource_group_name} ${module.aks.cluster_name}"
+}
 
   # Trigger re-run if any of these change
   triggers = {
     static_ip = azurerm_public_ip.ingress_ip.ip_address
     cluster_id = module.aks.cluster_id
-    script_hash = filemd5("${path.module}/scripts/install-nginx.sh")
+    script_hash = filemd5("${path.root}/scripts/install-nginx.sh")
   }
 }
 
@@ -141,7 +141,7 @@ data "kubernetes_service" "nginx_lb" {
     namespace = "ingress-nginx"
   }
 
-  depends_on = [helm_release.nginx_ingress_controller]
+  depends_on = [null_resource.install_nginx_ingress]
 }
 
 
