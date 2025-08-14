@@ -1,3 +1,4 @@
+# Name of the Azure Container Registry - must be globally unique across all Azure
 variable "acr_name" {
   description = "Name of the Azure Container Registry (must be globally unique)"
   type        = string
@@ -7,16 +8,19 @@ variable "acr_name" {
   }
 }
 
+# Resource group where ACR will be created - must already exist
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string
 }
 
+# Azure region for ACR deployment - should match other resources for best performance
 variable "location" {
   description = "Azure region for the ACR"
   type        = string
 }
 
+# Standard Azure tags for resource organization and cost tracking
 variable "tags" {
   description = "Tags to apply to the ACR"
   type        = map(string)

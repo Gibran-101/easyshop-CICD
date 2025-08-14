@@ -1,4 +1,4 @@
-# Create the Azure Container Registry
+# Private container registry for storing and managing Docker images
 resource "azurerm_container_registry" "acr" {
   name                = var.acr_name
   resource_group_name = var.resource_group_name
