@@ -1,87 +1,91 @@
+# =======================
+# Infrastructure Foundation Outputs
+# =======================
+
+# Resource group name where all resources are deployed
+# Useful for manual operations and Azure CLI commands
 output "resource_group_name" {
   description = "Resource group name"
   value       = module.networking.resource_group_name
 }
 
+# =======================
+# Security and Secrets Management Outputs
+# =======================
+
+# Application Key Vault name for manual secret management
+# Use with: az keyvault secret set --vault-name <this-value>
 output "key_vault_name" {
   description = "Application Key Vault name"
   value       = module.app_keyvault.key_vault_name
 }
 
+# Key Vault URI for application SDK configuration
+# Format: https://keyvaultname.vault.azure.net/
 output "key_vault_uri" {
   description = "Application Key Vault URI"
   value       = module.app_keyvault.key_vault_uri
 }
 
+# =======================
+# Network and DNS Outputs
+# =======================
+
+# Static IP address assigned to the ingress load balancer
+# This is where your domain points and where traffic enters the cluster
 output "static_ip_address" {
   description = "The static IP address"
   value       = azurerm_public_ip.ingress_ip.ip_address
 }
 
+# Azure-provided FQDN for the static IP (alternative to custom domain)
+# Format: projectname-lb.eastus.cloudapp.azure.com
 output "static_ip_fqdn" {
   description = "The Azure FQDN"
   value       = azurerm_public_ip.ingress_ip.fqdn
 }
 
+# DNS nameservers that must be configured at your domain registrar
+# Critical: Update these at your domain provider for DNS to work
 output "dns_nameservers" {
   description = "Nameservers to configure at your domain registrar"
   value       = module.dns.name_servers
 }
 
-# Output values for Kubernetes manifest templating
+# =======================
+# Kubernetes Integration Outputs
+# =======================
+
+# Client ID of the managed identity for CSI Secret Store driver
+# Used in SecretProviderClass manifests to access Key Vault secrets
 output "managed_identity_client_id" {
   description = "Client ID of the managed identity for Key Vault access"
   value       = module.keyvault_secrets.managed_identity_client_id
   sensitive   = false
 }
 
+# Azure AD tenant ID for authentication configuration
+# Required for CSI Secret Store driver and application authentication
 output "tenant_id" {
   description = "Azure AD tenant ID"
   value       = data.azurerm_client_config.current.tenant_id
   sensitive   = false
 }
 
+# List of all secrets stored in Key Vault for verification
+# Helps confirm all expected application secrets were created
 output "secrets_stored" {
   description = "List of secrets stored in Key Vault"
   value       = module.keyvault_secrets.secrets_stored
 }
 
-# output "acr_login_server" {
-#   description = "ACR login server"
-#   value       = module.acr.acr_login_server
-# }
+# =======================
+# Container and Deployment Outputs
+# =======================
 
-# output "aks_cluster_name" {
-#   description = "AKS cluster name"
-#   value       = module.aks.cluster_name
-# }
-
-# output "aks_cluster_id" {
-#   description = "AKS cluster ID"
-#   value       = module.aks.cluster_id
-# }
-
-# output "dns_zone_name" {
-#   description = "DNS zone name"
-#   value       = module.dns.dns_zone_name
-# }
-
-# output "dns_name_servers" {
-#   description = "DNS name servers"
-#   value       = module.dns.name_servers
-# }
-
-# output "load_balancer_ip" {
-#   description = "Load balancer public IP"
-#   value       = module.loadbalancer.public_ip_address
-# }
-
-# output "argocd_namespace" {
-#   description = "ArgoCD namespace"
-#   value       = module.argocd.namespace
-# }
-
-# output "grafana_url" {
-#   description = "Grafana URL"
-#   value       = module.observability.grafana_url
-# }
+# ACR login server URL for docker push/pull operations
+# Used in CI/CD pipelines and local development
+output "acr_login_server" {
+  description = "ACR login server URL"
+  value       = module.acr.acr_login_server
+}

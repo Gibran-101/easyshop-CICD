@@ -1,9 +1,12 @@
 # Data source to get current Azure client configuration
+# Provides tenant ID, subscription ID, and object ID for authentication and resource setup
 data "azurerm_client_config" "current" {}
 
 # =======================
 # Module: networking
 # =======================
+# Creates the base networking infrastructure including VNet, subnets, and security groups
+# This is the foundation that all other modules depend on
 module "networking" {
   source       = "./modules/networking"
   project_name = var.project_name
@@ -14,6 +17,8 @@ module "networking" {
 # =======================
 # Module: Application Key Vault (for storing app secrets)
 # =======================
+# Creates secure storage for application secrets, keys, and certificates
+# Provides centralized secret management with proper access controls
 module "app_keyvault" {
   source              = "./modules/vault"
   key_vault_name      = "${var.project_name}-kv"
@@ -37,6 +42,8 @@ module "app_keyvault" {
 # # =======================
 # Module: ACR (Container Registry)
 # =======================
+# Private Docker registry for storing application container images
+# Integrates with AKS for seamless image pulls and CI/CD pipelines
 module "acr" {
   source              = "./modules/acr"
   acr_name            = var.acr_name
@@ -46,7 +53,8 @@ module "acr" {
   depends_on          = [module.networking]
 }
 
-# Store ACR credentials in Application Key Vault
+# Store ACR credentials in Application Key Vault for CI/CD access
+# Enables automated deployments and secure credential management
 resource "azurerm_key_vault_secret" "acr_admin_username" {
   name         = "acr-admin-username"
   value        = module.acr.admin_username
@@ -64,6 +72,8 @@ resource "azurerm_key_vault_secret" "acr_admin_password" {
 # =======================
 # Module: AKS (Kubernetes Cluster)
 # =======================
+# Managed Kubernetes cluster for running containerized applications
+# Configured with proper networking, security, and Azure service integration
 module "aks" {
   source              = "./modules/aks"
   aks_cluster_name    = var.aks_cluster_name
@@ -72,15 +82,21 @@ module "aks" {
   vnet_subnet_id      = module.networking.aks_subnet_id
   acr_id              = module.acr.acr_id
   key_vault_id        = module.app_keyvault.key_vault_id
+
+  # Cost-optimized settings 
   node_count          = 2
   vm_size             = "Standard_B2s"
-  enable_auto_scaling = false
-
+  enable_auto_scaling = true
 
   tags       = var.tags
   depends_on = [module.networking, module.app_keyvault] #remember to add acr here
 }
 
+# =======================
+# Static Public IP for Load Balancer - Network Entry Point
+# =======================
+# Dedicated static IP for the ingress controller load balancer
+# Provides stable endpoint for DNS configuration and external access
 resource "azurerm_public_ip" "ingress_ip" {
   name                = "${var.project_name}-ingress-ip"
   location            = var.location
@@ -92,43 +108,6 @@ resource "azurerm_public_ip" "ingress_ip" {
 
   depends_on = [module.networking] # Only depends on networking
 }
-
-# resource "helm_release" "nginx_ingress_controller" {
-#   name       = "ingress-nginx"
-#   repository = "https://kubernetes.github.io/ingress-nginx"
-#   chart      = "ingress-nginx"
-#   version    = "4.8.3"
-#   namespace  = "ingress-nginx"
-
-#   create_namespace = true
-
-#   # Use the static IP
-#   set {
-#     name  = "controller.service.loadBalancerIP"
-#     value = azurerm_public_ip.ingress_ip.ip_address
-#   }
-
-#   # Tell Azure which resource group has the IP
-#   set {
-#     name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-resource-group"
-#     value = module.networking.resource_group_name
-#   }
-#   depends_on = [module.aks, azurerm_public_ip.ingress_ip] # Depends on AKS and Static IP
-# }
-
-# =======================
-# NGINX Installation via Script
-# =======================
-
-# Get the LoadBalancer details
-# data "kubernetes_service" "nginx_lb" {
-#   metadata {
-#     name      = "ingress-nginx-controller"
-#     namespace = "ingress-nginx"
-#   }
-
-#   depends_on = [null_resource.install_nginx_ingress]
-# }
 
 # =======================
 # Traefik Ingress Installation (Fast & Reliable)
@@ -151,6 +130,8 @@ resource "null_resource" "install_traefik_ingress" {
 # =======================
 # Module: DNS (Azure DNS)
 # =======================
+# Azure DNS zone and records for domain management
+# Points the domain to the static IP and manages subdomains
 module "dns" {
   source               = "./modules/dns"
   project_name         = var.project_name
@@ -166,6 +147,8 @@ module "dns" {
 # =======================
 # Module: ArgoCD
 # =======================
+# GitOps continuous deployment platform for Kubernetes
+# Automatically syncs applications from Git repositories to the cluster
 module "argocd" {
   source           = "./modules/argocd"
   kube_config      = module.aks.kube_config
@@ -185,6 +168,8 @@ module "argocd" {
 # =======================
 # Module: ArgoCD Image Updater
 # =======================
+# Automatically updates container image tags in Git repositories
+# Enables fully automated CI/CD pipeline from code push to production
 module "argocd_image_updater" {
   source             = "./modules/argocd-image-updater"
   kube_config        = module.aks.kube_config
@@ -198,8 +183,10 @@ module "argocd_image_updater" {
 }
 
 # =======================
-# Module: Key Vault Secrets (NEW)
+# Module: Key Vault Secrets - Application Credentials Layer
 # =======================
+# Generates and stores application-specific secrets in Key Vault
+# Creates managed identity for AKS to access secrets via CSI driver
 module "keyvault_secrets" {
   source = "./modules/keyvault-secrets"
 
@@ -216,14 +203,3 @@ module "keyvault_secrets" {
 
   depends_on = [module.app_keyvault, module.aks]
 }
-
-# # =======================
-# # Module: Observability (Grafana, Prometheus, Loki)
-# # =======================
-# module "observability" {
-#   source           = "./modules/observability"
-#   kube_config      = module.aks.kube_config
-#   observability_ns = var.observability_namespace
-#   tags             = var.tags
-#   depends_on       = [module.aks]
-# }
