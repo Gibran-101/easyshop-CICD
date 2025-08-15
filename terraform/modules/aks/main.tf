@@ -6,26 +6,23 @@ resource "azurerm_kubernetes_cluster" "aks" {
   resource_group_name = var.resource_group_name
   dns_prefix          = var.aks_cluster_name # Creates: easyshop-aks.eastus.azmk8s.io
 
+  # Kubernetes version - using latest stable
+  kubernetes_version = var.kubernetes_version
+
   # Default node pool where application pods run
   # Optimized for cost with managed disks and proper sizing
   default_node_pool {
     name            = "default"
-    node_count      = var.node_count
     vm_size         = var.vm_size
     type            = "VirtualMachineScaleSets"
     os_disk_size_gb = 30
     vnet_subnet_id  = var.vnet_subnet_id
 
-    # Dynamically configure autoscaling for the AKS node pool.
-  # If `enable_auto_scaling` is true, this block sets the minimum and maximum node counts.
-  # When autoscaling is disabled, this block is skipped entirely.
-    dynamic "autoscale" {
-      for_each = var.enable_auto_scaling ? [1] : []
-      content {
-        min_count = var.min_count
-        max_count = var.max_count
-      }
-    }
+    # Autoscaling configuration - when min_count and max_count are set, autoscaling is enabled
+    # When they're null, node_count is used for fixed sizing
+    node_count = var.enable_auto_scaling ? null : var.node_count
+    min_count  = var.enable_auto_scaling ? var.min_count : null
+    max_count  = var.enable_auto_scaling ? var.max_count : null
 
     # Node labels for pod scheduling and organization
     node_labels = {
@@ -53,6 +50,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   # Enable RBAC for granular access control to cluster resources
   role_based_access_control_enabled = true
+
+  key_vault_secrets_provider {
+    secret_rotation_enabled = true
+  }
 }
 
 # Grant AKS managed identity permission to pull images from ACR
@@ -62,6 +63,8 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
   role_definition_name             = "AcrPull"
   scope                            = var.acr_id
   skip_service_principal_aad_check = true
+
+  depends_on = [azurerm_kubernetes_cluster.aks]
 }
 
 # Grant AKS access to read secrets from Key Vault
