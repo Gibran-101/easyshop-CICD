@@ -17,10 +17,10 @@ provider "azurerm" {
     resource_group {
       # Allow Terraform to delete resource groups even if they contain resources
       # Useful for clean teardown but use with caution in production
-      prevent_deletion_if_contains_resources = true
+      prevent_deletion_if_contains_resources = false
     }
   }
-  
+
   # Azure credentials are provided via environment variables (ARM_*)
   # These are automatically set by GitHub Actions or local Azure CLI login
   # Required variables:
@@ -28,6 +28,16 @@ provider "azurerm" {
   # - ARM_CLIENT_SECRET: Service principal password
   # - ARM_SUBSCRIPTION_ID: Azure subscription ID  
   # - ARM_TENANT_ID: Azure AD tenant ID
+}
+
+# Kubernetes provider - configured after AKS is created
+# Use data source to avoid chicken-and-egg problem
+data "azurerm_kubernetes_cluster" "aks" {
+  count               = var.create_aks_resources ? 1 : 0
+  name                = var.aks_cluster_name
+  resource_group_name = var.resource_group_name
+  
+  depends_on = [module.aks]
 }
 
 # =======================
@@ -38,10 +48,10 @@ provider "azurerm" {
 provider "kubernetes" {
   # Connection details are populated after AKS cluster creation
   # Uses try() function to handle initial state when cluster doesn't exist yet
-  host                   = try(module.aks.kube_config[0].host, "")
-  client_certificate     = try(base64decode(module.aks.kube_config[0].client_certificate), "")
-  client_key             = try(base64decode(module.aks.kube_config[0].client_key), "")
-  cluster_ca_certificate = try(base64decode(module.aks.kube_config[0].cluster_ca_certificate), "")
+  host                   = var.create_aks_resources ? data.azurerm_kubernetes_cluster.aks[0].kube_config.0.host : ""
+  client_certificate     = var.create_aks_resources ? base64decode(data.azurerm_kubernetes_cluster.aks[0].kube_config.0.client_certificate) : ""
+  client_key             = var.create_aks_resources ? base64decode(data.azurerm_kubernetes_cluster.aks[0].kube_config.0.client_key) : ""
+  cluster_ca_certificate = var.create_aks_resources ? base64decode(data.azurerm_kubernetes_cluster.aks[0].kube_config.0.cluster_ca_certificate) : ""
 }
 
 # =======================
@@ -53,9 +63,9 @@ provider "helm" {
   kubernetes {
     # Same connection configuration as Kubernetes provider
     # Ensures Helm can deploy charts to the AKS cluster
-    host                   = try(module.aks.kube_config[0].host, "")
-    client_certificate     = try(base64decode(module.aks.kube_config[0].client_certificate), "")
-    client_key             = try(base64decode(module.aks.kube_config[0].client_key), "")
-    cluster_ca_certificate = try(base64decode(module.aks.kube_config[0].cluster_ca_certificate), "")
+    host                   = var.create_aks_resources ? data.azurerm_kubernetes_cluster.aks[0].kube_config.0.host : ""
+    client_certificate     = var.create_aks_resources ? base64decode(data.azurerm_kubernetes_cluster.aks[0].kube_config.0.client_certificate) : ""
+    client_key             = var.create_aks_resources ? base64decode(data.azurerm_kubernetes_cluster.aks[0].kube_config.0.client_key) : ""
+    cluster_ca_certificate = var.create_aks_resources ? base64decode(data.azurerm_kubernetes_cluster.aks[0].kube_config.0.cluster_ca_certificate) : ""
   }
 }

@@ -82,6 +82,13 @@ variable "aks_enable_auto_scaling" {
   default     = true
 }
 
+# Flag to control creation of AKS-dependent resources
+variable "create_aks_resources" {
+  description = "Whether to create AKS-dependent resources (ArgoCD, etc.)"
+  type        = bool
+  default     = true
+}
+
 # =======================
 # DNS and Domain Configuration
 # =======================
