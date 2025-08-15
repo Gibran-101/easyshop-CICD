@@ -1,16 +1,18 @@
-# Create namespace for ArgoCD
+# Dedicated namespace for ArgoCD components - isolates GitOps infrastructure
+# Separates ArgoCD from application workloads for better organization and security
 resource "kubernetes_namespace" "argocd" {
   metadata {
     name = var.argocd_namespace
   }
 }
 
-# Install ArgoCD using Helm
+# ArgoCD installation using official Helm chart
+# Provides complete GitOps platform for continuous deployment from Git repositories
 resource "helm_release" "argocd" {
   name       = "argocd"
   repository = "https://argoproj.github.io/argo-helm"
   chart      = "argo-cd"
-  version    = "5.51.4" # Latest stable version
+  version    = var.argocd_chart_version
   namespace  = kubernetes_namespace.argocd.metadata[0].name
 
   # Basic configuration for personal project
@@ -20,10 +22,6 @@ resource "helm_release" "argocd" {
         service = {
           type = "LoadBalancer" # Expose ArgoCD UI
         }
-      }
-      # Disable components not needed for personal project
-      dex = {
-        enabled = false # Disable SSO
       }
       notifications = {
         enabled = false # Disable notifications controller
@@ -37,7 +35,8 @@ resource "helm_release" "argocd" {
   depends_on = [kubernetes_namespace.argocd]
 }
 
-# Get ArgoCD initial admin password
+# Retrieve the auto-generated admin password for initial access
+# ArgoCD creates this secret during installation with a random password
 data "kubernetes_secret" "argocd_admin" {
   metadata {
     name      = "argocd-initial-admin-secret"
