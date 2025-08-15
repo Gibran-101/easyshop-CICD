@@ -1,11 +1,13 @@
-# Create DNS Zone for your domain
+# Azure DNS Zone for hosting domain DNS records
+# Provides authoritative DNS hosting for your domain with Azure's global DNS infrastructure
 resource "azurerm_dns_zone" "dns" {
   name                = var.dns_zone_name
   resource_group_name = var.resource_group_name
   tags                = var.tags
 }
 
-# A Record for root domain using Azure Alias pointing to Static IP resource
+# A record for root domain pointing to load balancer
+# Uses Azure Alias record for automatic IP updates when load balancer IP changes
 resource "azurerm_dns_a_record" "root" {
   name                = "@" # Root domain (buildandship.space)
   zone_name           = azurerm_dns_zone.dns.name
