@@ -149,13 +149,13 @@ module "dns" {
 # =======================
 # GitOps continuous deployment platform for Kubernetes
 # Automatically syncs applications from Git repositories to the cluster
-module "argocd" {
-  source           = "./modules/argocd"
-  kube_config      = module.aks.kube_config
-  argocd_namespace = var.argocd_namespace
-  tags             = var.tags
-  depends_on       = [module.aks]
-}
+# module "argocd" {
+#   source           = "./modules/argocd"
+#   kube_config      = module.aks.kube_config
+#   argocd_namespace = var.argocd_namespace
+#   tags             = var.tags
+#   depends_on       = [module.aks]
+# }
 
 # # Store ArgoCD password in Application Key Vault
 # resource "azurerm_key_vault_secret" "argocd_admin_password" {
@@ -170,17 +170,17 @@ module "argocd" {
 # =======================
 # Automatically updates container image tags in Git repositories
 # Enables fully automated CI/CD pipeline from code push to production
-module "argocd_image_updater" {
-  source             = "./modules/argocd-image-updater"
-  kube_config        = module.aks.kube_config
-  argocd_namespace   = var.argocd_namespace
-  acr_login_server   = module.acr.acr_login_server
-  acr_admin_username = module.acr.admin_username
-  acr_admin_password = module.acr.admin_password
-  github_repo_url    = var.github_repo_url
-  tags               = var.tags
-  depends_on         = [module.argocd, module.acr]
-}
+# module "argocd_image_updater" {
+#   source             = "./modules/argocd-image-updater"
+#   kube_config        = module.aks.kube_config
+#   argocd_namespace   = var.argocd_namespace
+#   acr_login_server   = module.acr.acr_login_server
+#   acr_admin_username = module.acr.admin_username
+#   acr_admin_password = module.acr.admin_password
+#   github_repo_url    = var.github_repo_url
+#   tags               = var.tags
+#   depends_on         = [module.argocd, module.acr]
+# }
 
 # =======================
 # Module: Key Vault Secrets - Application Credentials Layer
