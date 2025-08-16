@@ -11,26 +11,25 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   # Default node pool where application pods run
   # Optimized for cost with managed disks and proper sizing
-  default_node_pool {
-    name            = "default"
-    vm_size         = var.vm_size
-    type            = "VirtualMachineScaleSets"
-    os_disk_size_gb = 30
-    vnet_subnet_id  = var.vnet_subnet_id
+default_node_pool {
+  name            = "default"
+  vm_size         = var.vm_size
+  type            = "VirtualMachineScaleSets"
+  os_disk_size_gb = 30
+  vnet_subnet_id  = var.vnet_subnet_id
 
-    # Autoscaling configuration - when min_count and max_count are set, autoscaling is enabled
-    # When they're null, node_count is used for fixed sizing
-    node_count = var.enable_auto_scaling ? null : var.node_count
-    min_count  = var.enable_auto_scaling ? var.min_count : null
-    max_count  = var.enable_auto_scaling ? var.max_count : null
+  # Autoscaling configuration
+  node_count          = var.enable_auto_scaling ? null : var.node_count
+  min_count           = var.enable_auto_scaling ? var.min_count : null
+  max_count           = var.enable_auto_scaling ? var.max_count : null
 
-    # Node labels for pod scheduling and organization
-    node_labels = {
-      nodepool    = "default"
-      workload    = "general"
-      environment = "dev"
-    }
+  node_labels = {
+    nodepool    = "default"
+    workload    = "general"
+    environment = "dev"
   }
+}
+
 
   # Managed identity for secure Azure service access without stored credentials
   # Automatically rotated and managed by Azure
