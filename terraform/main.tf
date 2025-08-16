@@ -60,6 +60,13 @@ resource "azurerm_key_vault_secret" "acr_admin_username" {
   value        = module.acr.admin_username
   key_vault_id = module.app_keyvault.key_vault_id
   depends_on   = [module.app_keyvault, module.acr]
+
+  # Lifecycle rule to handle soft-deleted secrets
+  lifecycle {
+    ignore_changes = [
+      value  # Ignore changes to the value if secret already exists
+    ]
+  }
 }
 
 resource "azurerm_key_vault_secret" "acr_admin_password" {
@@ -67,6 +74,13 @@ resource "azurerm_key_vault_secret" "acr_admin_password" {
   value        = module.acr.admin_password
   key_vault_id = module.app_keyvault.key_vault_id
   depends_on   = [module.app_keyvault, module.acr]
+
+  # Lifecycle rule to handle soft-deleted secrets
+  lifecycle {
+    ignore_changes = [
+      value  # Ignore changes to the value if secret already exists
+    ]
+  }
 }
 
 # =======================
