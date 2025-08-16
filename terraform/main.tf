@@ -96,14 +96,17 @@ module "aks" {
   vnet_subnet_id      = module.networking.aks_subnet_id
   acr_id              = module.acr.acr_id
   key_vault_id        = module.app_keyvault.key_vault_id
-
-  # Cost-optimized settings 
+  
+  # Fixed: Only pass values when needed
   node_count          = 2
   vm_size             = "Standard_B2s"
-  enable_auto_scaling = true
+  enable_auto_scaling = false
+  # Don't pass min_count and max_count when autoscaling is disabled
+  # min_count         = null  # Remove this line
+  # max_count         = null  # Remove this line
 
   tags       = var.tags
-  depends_on = [module.networking, module.app_keyvault] #remember to add acr here
+  depends_on = [module.networking, module.app_keyvault]
 }
 
 # =======================

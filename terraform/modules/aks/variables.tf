@@ -67,14 +67,14 @@ variable "enable_auto_scaling" {
 variable "min_count" {
   description = "Minimum number of nodes when auto-scaling is enabled"
   type        = number
-  default     = 2
+  default     = null
 }
 
 # Maximum nodes when auto-scaling enabled - set based on workload needs
 variable "max_count" {
   description = "Maximum number of nodes when auto-scaling is enabled"
   type        = number
-  default     = 3
+  default     = null
 }
 
 # Azure AD group IDs for cluster admin access - leave empty for basic setup
