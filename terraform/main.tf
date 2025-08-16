@@ -55,33 +55,33 @@ module "acr" {
 
 # Store ACR credentials in Application Key Vault for CI/CD access
 # Enables automated deployments and secure credential management
-resource "azurerm_key_vault_secret" "acr_admin_username" {
-  name         = "acr-admin-username"
-  value        = module.acr.admin_username
-  key_vault_id = module.app_keyvault.key_vault_id
-  depends_on   = [module.app_keyvault, module.acr]
+# resource "azurerm_key_vault_secret" "acr_admin_username" {
+#   name         = "acr-admin-username"
+#   value        = module.acr.admin_username
+#   key_vault_id = module.app_keyvault.key_vault_id
+#   depends_on   = [module.app_keyvault, module.acr]
 
-  # Lifecycle rule to handle soft-deleted secrets
-  lifecycle {
-    ignore_changes = [
-      value  # Ignore changes to the value if secret already exists
-    ]
-  }
-}
+#   # Lifecycle rule to handle soft-deleted secrets
+#   lifecycle {
+#     ignore_changes = [
+#       value  # Ignore changes to the value if secret already exists
+#     ]
+#   }
+# }
 
-resource "azurerm_key_vault_secret" "acr_admin_password" {
-  name         = "acr-admin-password"
-  value        = module.acr.admin_password
-  key_vault_id = module.app_keyvault.key_vault_id
-  depends_on   = [module.app_keyvault, module.acr]
+# resource "azurerm_key_vault_secret" "acr_admin_password" {
+#   name         = "acr-admin-password"
+#   value        = module.acr.admin_password
+#   key_vault_id = module.app_keyvault.key_vault_id
+#   depends_on   = [module.app_keyvault, module.acr]
 
-  # Lifecycle rule to handle soft-deleted secrets
-  lifecycle {
-    ignore_changes = [
-      value  # Ignore changes to the value if secret already exists
-    ]
-  }
-}
+#   # Lifecycle rule to handle soft-deleted secrets
+#   lifecycle {
+#     ignore_changes = [
+#       value  # Ignore changes to the value if secret already exists
+#     ]
+#   }
+# }
 
 # =======================
 # Module: AKS (Kubernetes Cluster)
