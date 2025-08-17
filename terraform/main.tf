@@ -131,17 +131,20 @@ resource "azurerm_public_ip" "ingress_ip" {
 # =======================
 resource "null_resource" "install_traefik_ingress" {
   provisioner "local-exec" {
-    command = "${path.module}/../scripts/install-traefik.sh ${azurerm_public_ip.ingress_ip.ip_address} ${module.networking.resource_group_name} ${module.aks.cluster_name}"
+    command = <<EOT
+      chmod +x ${path.module}/../scripts/install-traefik.sh
+      ${path.module}/../scripts/install-traefik.sh ${azurerm_public_ip.ingress_ip.ip_address} ${module.networking.resource_group_name} ${module.aks.cluster_name}
+    EOT
   }
-  
+
   depends_on = [module.aks, azurerm_public_ip.ingress_ip]
-  
-  # Trigger re-run when these change
+
   triggers = {
-    static_ip = azurerm_public_ip.ingress_ip.ip_address
+    static_ip  = azurerm_public_ip.ingress_ip.ip_address
     cluster_id = module.aks.cluster_id
   }
 }
+
 
 
 # =======================
