@@ -101,7 +101,7 @@ jobs:
           name: terraform-cache
           path: ~/.terraform.d/plugin-cache
           retention-days: 5
-
+  
   apply:
     name: 'Terraform Apply'
     runs-on: ubuntu-latest
@@ -143,6 +143,12 @@ jobs:
           echo "key_vault_name=$(terraform output -raw key_vault_name 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
           echo "managed_identity_client_id=$(terraform output -raw managed_identity_client_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
           echo "tenant_id=$(terraform output -raw tenant_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
+
+      - name: Fix script permissions
+        run: |
+          find . -name "*.sh" -type f -exec chmod +x {} \;
+          echo " All script permissions fixed"
+          ls -la ../scripts/install-traefik.sh
 
   update-k8s-manifests:
     name: 'Update Kubernetes Manifests'
