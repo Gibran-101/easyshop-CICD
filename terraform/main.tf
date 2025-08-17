@@ -129,15 +129,92 @@ resource "azurerm_public_ip" "ingress_ip" {
 # =======================
 # Traefik Ingress Installation (Fast & Reliable)
 # =======================
+# Replace your Traefik resource in terraform/main.tf with this:
+
 resource "null_resource" "install_traefik_ingress" {
   provisioner "local-exec" {
-    command = "bash ${path.module}/../scripts/install-traefik.sh ${azurerm_public_ip.ingress_ip.ip_address} ${module.networking.resource_group_name} ${module.aks.cluster_name}"
+    interpreter = ["/bin/bash", "-c"]
+    command = <<-EOT
+      set -e
+      
+      STATIC_IP="${azurerm_public_ip.ingress_ip.ip_address}"
+      RESOURCE_GROUP="${module.networking.resource_group_name}"
+      CLUSTER_NAME="${module.aks.cluster_name}"
+      
+      echo " Installing Traefik Ingress Controller..."
+      echo "Static IP: $STATIC_IP"
+      echo "Resource Group: $RESOURCE_GROUP"
+      echo "Cluster: $CLUSTER_NAME"
+      
+      # Install tools if not available
+      if ! command -v kubectl &> /dev/null; then
+        echo " Installing kubectl..."
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+      fi
+      
+      if ! command -v helm &> /dev/null; then
+        echo " Installing helm..."
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      fi
+      
+      # Wait for AKS to be ready
+      echo " Waiting 30 seconds for AKS to be fully ready..."
+      sleep 30
+      
+      # Get AKS credentials
+      echo " Getting AKS credentials..."
+      az aks get-credentials --resource-group $RESOURCE_GROUP --name $CLUSTER_NAME --overwrite-existing
+      
+      # Test kubectl connection
+      echo " Testing kubectl connection..."
+      kubectl get nodes
+      
+      # Add Traefik Helm repository
+      echo " Adding Traefik Helm repository..."
+      helm repo add traefik https://traefik.github.io/charts
+      helm repo update
+      
+      # Check if Traefik is already installed
+      if helm list -n traefik-system | grep -q traefik; then
+        echo " Traefik already installed, upgrading..."
+        ACTION="upgrade"
+      else
+        echo " Installing Traefik for the first time..."
+        ACTION="install"
+      fi
+      
+      # Install/Upgrade Traefik with Azure LoadBalancer
+      echo " $${ACTION^}ing Traefik Ingress Controller..."
+      helm $$ACTION traefik traefik/traefik \
+          --namespace traefik-system \
+          --create-namespace \
+          --set service.type=LoadBalancer \
+          --set service.spec.loadBalancerIP=$$STATIC_IP \
+          --set service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-resource-group"=$$RESOURCE_GROUP \
+          --set service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"="/ping" \
+          --set ports.web.port=80 \
+          --set ports.websecure.port=443 \
+          --set globalArguments[0]="--global.checknewversion=false" \
+          --set globalArguments[1]="--global.sendanonymoususage=false" \
+          --wait \
+          --timeout=5m
+      
+      echo " Traefik installation completed successfully!"
+      
+      # Verify installation
+      echo " Verifying Traefik installation..."
+      kubectl get svc -n traefik-system
+      kubectl get pods -n traefik-system
+      
+      echo " Traefik is ready! "
+    EOT
   }
-
+  
   depends_on = [module.aks, azurerm_public_ip.ingress_ip]
-
+  
   triggers = {
-    static_ip  = azurerm_public_ip.ingress_ip.ip_address
+    static_ip = azurerm_public_ip.ingress_ip.ip_address
     cluster_id = module.aks.cluster_id
   }
 }
