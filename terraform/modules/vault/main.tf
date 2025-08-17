@@ -1,7 +1,7 @@
 # Azure Key Vault for secure storage of application secrets, keys, and certificates
 # Provides centralized secret management with fine-grained access control and audit logging
 resource "azurerm_key_vault" "this" {
-  name                = var.key_vault_name
+  name                = "${var.key_vault_name}-kv-${random_string.suffix.result}"
   location            = var.location
   resource_group_name = var.resource_group_name
   tenant_id           = var.tenant_id
