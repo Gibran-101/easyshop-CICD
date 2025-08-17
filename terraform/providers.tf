@@ -10,7 +10,7 @@ provider "azurerm" {
       # Don't auto-purge soft-deleted vaults to prevent accidental data loss
       purge_soft_delete_on_destroy    = false
       # Allow recovery of soft-deleted Key Vaults during deployment
-      recover_soft_deleted_key_vaults = true
+      recover_soft_deleted_key_vaults = false
     }
     
     # Resource group configuration

@@ -10,8 +10,8 @@ resource "azurerm_key_vault" "this" {
  # Security configuration - controls what Azure services can use this vault for
   enabled_for_disk_encryption     = true  # VMs can get disk encryption keys
   enabled_for_template_deployment = true #VMs can get certificates during startup
-  purge_protection_enabled        = true # Keep as true (can't be changed anyway)
-  soft_delete_retention_days      = 90   # Keep original value
+  # purge_protection_enabled        = true # Keep as true (can't be changed anyway)
+  # soft_delete_retention_days      = 90   # Keep original value
 
   # Access policy for the admin user/service principal - provides full control for management
   access_policy {
