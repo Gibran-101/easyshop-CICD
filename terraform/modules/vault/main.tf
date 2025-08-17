@@ -53,6 +53,35 @@ resource "azurerm_key_vault" "this" {
     ]
   }
 
+# Access policy for service principal (for GitHub Actions)
+  access_policy {
+    tenant_id = var.tenant_id
+    object_id = "3f185b42-0d3e-498a-b32d-862420950a20"  # Your service principal object ID
+
+    secret_permissions = [
+      "Get",
+      "List",
+      "Set",
+      "Delete",
+      "Purge",
+      "Recover"
+    ]
+
+    key_permissions = [
+      "Get",
+      "List",
+      "Create",
+      "Delete"
+    ]
+
+    certificate_permissions = [
+      "Get",
+      "List",
+      "Create",
+      "Delete"
+    ]
+  }
+
   #Network access control - controls which networks can reach the vault
   # null = public access, configured object = restricted access
   dynamic "network_acls" {
