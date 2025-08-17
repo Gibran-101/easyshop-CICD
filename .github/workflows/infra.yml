@@ -85,7 +85,7 @@ jobs:
         run: |
           mkdir -p ~/.terraform.d/plugin-cache
           echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
-          terraform init -backend-config="backend.conf"
+          terraform init -backend-config="backend.conf" -reconfigure
           terraform validate
       - name: Terraform Plan
         run: terraform plan -var-file="terraform.tfvars" -out=tfplan -no-color
@@ -131,7 +131,7 @@ jobs:
       - name: Configure cache & apply
         run: |
           echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
-          terraform init -backend-config="backend.conf"
+          terraform init -backend-config="backend.conf" -reconfigure
       - uses: actions/download-artifact@v4
         with:
           name: terraform-plan
