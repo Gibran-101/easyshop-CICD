@@ -79,7 +79,51 @@ variable "aks_vm_size" {
 variable "aks_enable_auto_scaling" {
   description = "Enable AKS auto-scaling"
   type        = bool
-  default     = true
+  default     = false
+}
+
+# =======================
+# Application Gateway Configuration
+# =======================
+
+# Application Gateway SKU tier for performance and features
+variable "app_gateway_sku_tier" {
+  description = "Application Gateway SKU tier (Standard_v2 or WAF_v2)"
+  type        = string
+  default     = "Standard_v2"
+  validation {
+    condition     = contains(["Standard_v2", "WAF_v2"], var.app_gateway_sku_tier)
+    error_message = "Application Gateway SKU tier must be Standard_v2 or WAF_v2."
+  }
+}
+
+# Enable Web Application Firewall for enhanced security
+variable "app_gateway_enable_waf" {
+  description = "Enable Web Application Firewall (requires WAF_v2 SKU)"
+  type        = bool
+  default     = false
+}
+
+# Minimum capacity for auto-scaling (cost optimization)
+variable "app_gateway_min_capacity" {
+  description = "Minimum Application Gateway capacity"
+  type        = number
+  default     = 1
+  validation {
+    condition     = var.app_gateway_min_capacity >= 1 && var.app_gateway_min_capacity <= 10
+    error_message = "Application Gateway minimum capacity must be between 1 and 10."
+  }
+}
+
+# Maximum capacity for auto-scaling (traffic spike handling)
+variable "app_gateway_max_capacity" {
+  description = "Maximum Application Gateway capacity"
+  type        = number
+  default     = 3
+  validation {
+    condition     = var.app_gateway_max_capacity >= 1 && var.app_gateway_max_capacity <= 125
+    error_message = "Application Gateway maximum capacity must be between 1 and 125."
+  }
 }
 
 # Flag to control creation of AKS-dependent resources

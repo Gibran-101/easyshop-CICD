@@ -34,8 +34,20 @@ output "aks_subnet_id" {
   value       = azurerm_subnet.aks_subnet.id
 }
 
+# 🆕 Application Gateway subnet ID - required for App Gateway deployment
+output "app_gateway_subnet_id" {
+  description = "The ID of the Application Gateway subnet"
+  value       = azurerm_subnet.app_gateway_subnet.id
+}
+
 # NSG ID - useful for adding additional security rules or associations
 output "aks_nsg_id" {
   description = "The ID of the AKS Network Security Group"
   value       = azurerm_network_security_group.aks_nsg.id
+}
+
+# 🆕 Application Gateway NSG ID
+output "app_gateway_nsg_id" {
+  description = "The ID of the Application Gateway Network Security Group"
+  value       = azurerm_network_security_group.app_gateway_nsg.id
 }

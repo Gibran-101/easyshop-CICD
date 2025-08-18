@@ -127,59 +127,69 @@ resource "azurerm_public_ip" "ingress_ip" {
 }
 
 # =======================
-# Traefik Ingress Installation (Fast & Reliable)
+# Module: Application Gateway (Azure Native Ingress)
 # =======================
-# Replace your Traefik resource in terraform/main.tf with this:
+# Enterprise-grade Layer 7 load balancer with WAF, SSL termination, and auto-scaling
+# Replaces traditional ingress controllers with Azure-native solution
+module "application_gateway" {
+  source = "./modules/application-gateway"
 
-resource "helm_release" "traefik_ingress_controller" {
-  name       = "traefik"
-  repository = "https://traefik.github.io/charts"
-  chart      = "traefik"
-  version    = "25.0.0"  # Latest stable version
-  namespace  = "traefik-system"
+  # Core configuration
+  project_name            = var.project_name
+  resource_group_name     = module.networking.resource_group_name
+  location                = var.location
+  app_gateway_subnet_id   = module.networking.app_gateway_subnet_id
+  public_ip_id            = azurerm_public_ip.ingress_ip.id
+  dns_zone_name           = var.dns_zone_name
+  key_vault_id            = module.app_keyvault.key_vault_id
 
-  create_namespace = true
-
-  # Traefik configuration values
-  values = [
-    yamlencode({
-      service = {
-        type = "LoadBalancer"
-        spec = {
-          loadBalancerIP = azurerm_public_ip.ingress_ip.ip_address
-        }
-        annotations = {
-          "service.beta.kubernetes.io/azure-load-balancer-resource-group" = module.networking.resource_group_name
-          "service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path" = "/ping"
-        }
-      }
-      
-      ports = {
-        web = {
-          port = 80
-        }
-        websecure = {
-          port = 443
-        }
-      }
-      
-      globalArguments = [
-        "--global.checknewversion=false",
-        "--global.sendanonymoususage=false"
-      ]
-      
-      # Enable dashboard (optional)
-      ingressRoute = {
-        dashboard = {
-          enabled = true
-        }
-      }
-    })
-  ]
-
-  depends_on = [module.aks, azurerm_public_ip.ingress_ip]
+  # Production configuration
+  sku_tier    = var.app_gateway_sku_tier
+  enable_waf  = var.app_gateway_enable_waf
   
-  timeout = 300  # 5 minutes timeout
+  # Auto-scaling for traffic spikes
+  autoscale_config = {
+    min_capacity = var.app_gateway_min_capacity
+    max_capacity = var.app_gateway_max_capacity
+  }
+
+  # Health monitoring
+  health_probe_config = {
+    path                = "/"
+    interval            = 30
+    timeout             = 30
+    unhealthy_threshold = 3
+    status_codes        = ["200-399"]
+  }
+
+  tags = var.tags
+  depends_on = [
+    module.networking,
+    module.app_keyvault,
+    azurerm_public_ip.ingress_ip
+  ]
+}
+
+# =======================
+# Enable AGIC as AKS Managed Add-on (Recommended)
+# =======================
+# This is the cleanest way - Azure manages AGIC for you
+resource "azurerm_kubernetes_cluster_extension" "agic" {
+  name           = "appgw-ingress"
+  cluster_id     = module.aks.cluster_id
+  extension_type = "microsoft.web.applicationgateway"
+
+  configuration_settings = {
+    "appgw-name"                = module.application_gateway.application_gateway_name
+    "appgw-resource-group"      = module.networking.resource_group_name
+    "appgw-subscription-id"     = data.azurerm_client_config.current.subscription_id
+    "kubernetes-watch-namespace" = "easyshop"
+  }
+
+  depends_on = [
+    module.aks,
+    module.application_gateway
+  ]
 }
 
 # =======================
