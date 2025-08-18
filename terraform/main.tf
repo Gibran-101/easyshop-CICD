@@ -14,6 +14,16 @@ module "networking" {
   tags         = var.tags
 }
 
+
+# =======================
+# Generate Timestamp for Key Vault (Every run gets unique name)
+# =======================
+locals {
+  # Generate timestamp-based suffix (changes every run)
+  timestamp_suffix = formatdate("MMDDhhmm", timestamp())
+  keyvault_name    = "${var.project_name}-kv-${local.timestamp_suffix}"
+}
+
 # =======================
 # Module: Application Key Vault (for storing app secrets)
 # =======================
@@ -21,7 +31,7 @@ module "networking" {
 # Provides centralized secret management with proper access controls
 module "app_keyvault" {
   source              = "./modules/vault"
-  key_vault_name      = "${var.project_name}-kv01"
+  key_vault_name      = local.keyvault_name 
   location            = var.location
   resource_group_name = module.networking.resource_group_name
   tenant_id           = data.azurerm_client_config.current.tenant_id
