@@ -181,28 +181,6 @@ module "application_gateway" {
 }
 
 # =======================
-# Enable AGIC as AKS Managed Add-on (Recommended)
-# =======================
-# This is the cleanest way - Azure manages AGIC for you
-resource "azurerm_kubernetes_cluster_extension" "agic" {
-  name           = "appgw-ingress"
-  cluster_id     = module.aks.cluster_id
-  extension_type = "microsoft.web.applicationgateway"
-
-  configuration_settings = {
-    "appgw-name"                = module.application_gateway.application_gateway_name
-    "appgw-resource-group"      = module.networking.resource_group_name
-    "appgw-subscription-id"     = data.azurerm_client_config.current.subscription_id
-    "kubernetes-watch-namespace" = "easyshop"
-  }
-
-  depends_on = [
-    module.aks,
-    module.application_gateway
-  ]
-}
-
-# =======================
 # Module: DNS (Azure DNS)
 # =======================
 # Azure DNS zone and records for domain management
