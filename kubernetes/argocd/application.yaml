@@ -1,4 +1,4 @@
-#ArgoCD application manifest file: it automates and governs your app deployment and updates, ensuring your cluster state matches what’s in your repo
+# ArgoCD application manifest file - simple SHA-based tagging
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -7,13 +7,26 @@ metadata:
   annotations:
     # Enable ArgoCD Image Updater for automatic deployments
     argocd-image-updater.argoproj.io/image-list: app=gibranf/easyshop
-    argocd-image-updater.argoproj.io/app.update-strategy: semver
-    argocd-image-updater.argoproj.io/app.allow-tags: regexp:^v[0-9]+\.[0-9]+\.[0-9]+$
-    #TODO: NEED TO WORK ON THE VERSIONING
+    
+    # Use latest tag strategy instead of semver
+    argocd-image-updater.argoproj.io/app.update-strategy: latest
+    
+    # Allow any tags (SHA tags don't follow semver pattern)
+    argocd-image-updater.argoproj.io/app.allow-tags: regexp:^[a-f0-9]{7,40}$,latest
+    
+    # Write back to Git repository
     argocd-image-updater.argoproj.io/write-back-method: git
     argocd-image-updater.argoproj.io/write-back-target: kustomization
+    
+    # Simple commit message
+    argocd-image-updater.argoproj.io/git-commit-message: "Update image tag to {{ .AppChanges }}"
+    
+    # Check for updates every 2 minutes
+    argocd-image-updater.argoproj.io/update-frequency: 2m
+    
     # Sync after CSI driver is installed
     argocd.argoproj.io/sync-wave: "2"
+
 spec:
   project: easyshop-project  # Use custom project instead of default
   
@@ -26,7 +39,7 @@ spec:
     # Use Kustomize for configuration management
     kustomize:
       images:
-      - gibranf/easyshop:v1.0.0  # Semantic versioning - updated by ArgoCD Image Updater
+      - gibranf/easyshop:latest  # This will be updated by ArgoCD Image Updater
   
   # Destination cluster and namespace
   destination:
@@ -70,6 +83,6 @@ spec:
   # Application info
   info:
   - name: Description
-    value: "EasyShop E-commerce Application with Azure Key Vault integration"
-  - name: Order
-    value: "2"
+    value: "EasyShop E-commerce Application with SHA-based tagging"
+  - name: Tagging Strategy
+    value: "Git SHA for unique identification"
