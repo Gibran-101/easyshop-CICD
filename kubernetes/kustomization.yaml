@@ -37,7 +37,7 @@ commonAnnotations:
 # Images to update (semantic versioning for better tracking)
 images:
 - name: gibranf/easyshop
-  newTag: v1.0.0  # Semantic versioning instead of "latest"
+  newTag: latest  # This will be updated by ArgoCD Image Updater to SHA tags
 
 # Resource transformations
 patches:
