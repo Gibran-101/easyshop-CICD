@@ -98,3 +98,7 @@ output "autoscale_configuration" {
     max_capacity = var.autoscale_config.max_capacity
   }
 }
+
+output "agic_identity_client_id" {
+  value = azurerm_user_assigned_identity.agic_identity.client_id
+}

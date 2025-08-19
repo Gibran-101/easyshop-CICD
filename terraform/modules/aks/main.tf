@@ -8,6 +8,8 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   # Kubernetes version - using latest stable
   kubernetes_version = var.kubernetes_version
+  workload_identity_enabled = true
+  oidc_issuer_enabled      = true
 
   # Default node pool where application pods run
   # Optimized for cost with managed disks and proper sizing
