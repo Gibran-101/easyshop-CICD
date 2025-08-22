@@ -127,9 +127,20 @@ jobs:
           echo "🔄 Current: Green, Switching to: Blue"
         fi
         
-        # Update image with digest pinning (safer than sed)
+        # ✅ FIXED: Update image with correct image name for kustomize
         echo "📝 Updating image with digest pinning..."
         kustomize edit set image gibranf/easyshop=${{ env.IMAGE_WITH_DIGEST }}
+        
+        # 🐛 DEBUG: Let's see what kustomize is generating
+        echo "🔍 DEBUG: Checking kustomization.yaml after image update:"
+        cat kustomization.yaml
+        echo ""
+        echo "🔍 DEBUG: Testing kustomize build (dry run):"
+        kustomize build . || echo "❌ Kustomize build failed!"
+        echo ""
+        echo "🔍 DEBUG: List of files in kubernetes directory:"
+        ls -la
+        echo ""
         
         # Deploy all resources (will fail fast if files missing)
         echo "📦 Deploying all resources..."
