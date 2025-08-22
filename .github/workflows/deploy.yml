@@ -43,30 +43,37 @@ jobs:
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "📦 Using SHA version: $VERSION"
 
+    # ✅ FIXED: Set up Docker Buildx with container driver that supports cache
     - name: 🐋 Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-
-    - name: 🔑 Login to ACR
-      uses: azure/docker-login@v1
       with:
-        login-server: ${{ env.REGISTRY }}
-        username: ${{ secrets.ARM_CLIENT_ID }}
-        password: ${{ secrets.ARM_CLIENT_SECRET }}
+        driver: docker-container
+        driver-opts: |
+          image=moby/buildkit:latest
+        use: true
 
+    # ✅ FIXED: Use Azure CLI for ACR login (more reliable than docker-login action)
+    - name: 🔑 Login to ACR
+      run: |
+        az acr login --name ${{ secrets.TF_ACR_NAME }}
+
+    # ✅ FIXED: Build and Push with ACR registry cache (more reliable than GHA cache for ACR)
     - name: 🏗️ Build and Push with Caching
       id: build
       uses: docker/build-push-action@v5
       with:
         context: .
         push: true
+        platforms: linux/amd64
         tags: |
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
         build-args: |
           GIT_SHA=${{ env.VERSION }}
           BUILD_DATE=${{ github.event.head_commit.timestamp }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        # Use ACR registry cache instead of GitHub Actions cache
+        cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache
+        cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache,mode=max
 
     - name: 📌 Get Image Digest
       id: digest
