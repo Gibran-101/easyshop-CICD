@@ -13,22 +13,24 @@ resources:
 - 15-keyvault-secret-provider.yaml  # Azure Key Vault integration
 - 06-mongodb-service.yaml
 - 07-mongodb-statefulset.yaml  # Uses managed-csi (no need for 02-mongodb-pv.yaml)
-- 08-easyshop-deployment.yaml  # Updated with Key Vault secrets + production settings
-- 09-easyshop-service.yaml  # Updated with ClusterIP + LoadBalancer options
-- 10-ingress.yaml  # Updated for AKS with buildandship.space domain
+- 08a-blue-deployment.yml      # ✅ BLUE deployment (initially active)
+- 08b-green-deployment.yaml    # ✅ GREEN deployment (initially inactive)
+- 09-easyshop-service.yaml     # Service that switches between blue/green
+- 10-ingress.yaml              # Updated for AKS with buildandship.space domain
 - 11-hpa.yaml
 - 12-migration-job.yaml
 - 13-redis-service.yaml
-- 14-redis-deployment.yaml  # Updated with Key Vault secrets + authentication + ConfigMap
-- cert-manager-issuer.yaml  # Let's Encrypt production issuer only
-- easyshop-certificate.yaml  # SSL certificates for buildandship.space
+- 14-redis-deployment.yaml     # Updated with Key Vault secrets + authentication + ConfigMap
+- cert-manager-issuer.yaml     # Let's Encrypt production issuer only
+- easyshop-certificate.yaml    # SSL certificates for buildandship.space
 
-# Common labels applied to all resources
-commonLabels:
-  app.kubernetes.io/name: easyshop
-  app.kubernetes.io/part-of: easyshop-platform
-  app.kubernetes.io/managed-by: kustomize
-  environment: production
+# Common labels applied to all resources - FIXED deprecated warning
+labels:
+- pairs:
+    app.kubernetes.io/name: easyshop
+    app.kubernetes.io/part-of: easyshop-platform
+    app.kubernetes.io/managed-by: kustomize
+    environment: production
 
 # Common annotations
 commonAnnotations:
@@ -37,7 +39,7 @@ commonAnnotations:
 # Images to update (semantic versioning for better tracking)
 images:
 - name: gibranf/easyshop
-  newTag: latest  # This will be updated by ArgoCD Image Updater to SHA tags
+  newTag: latest  # This will be updated by your deploy script
 
 # Resource transformations
 patches:
@@ -52,9 +54,11 @@ patches:
 
 # Replica count overrides for production
 replicas:
-- name: easyshop
-  count: 2  # Scale up for production
+- name: easyshop-blue    # Blue deployment replicas
+  count: 2
+- name: easyshop-green   # Green deployment replicas  
+  count: 2
 - name: mongodb
-  count: 1  # Keep MongoDB as single instance
+  count: 1
 - name: redis
-  count: 1  # Keep Redis as single instance
+  count: 1
