@@ -7,11 +7,11 @@ spec:
   replicas: 2 
   selector:
     matchLabels:
-      app: easyshop
+      app: easyshop-green
   template:
     metadata:
       labels:
-        app: easyshop
+        app: easyshop-green
     spec:
       containers:
         - name: easyshop
