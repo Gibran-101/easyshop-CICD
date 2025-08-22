@@ -74,33 +74,14 @@ jobs:
           BUILD_DATE=${{ github.event.head_commit.timestamp }}
         cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache
         cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache,mode=max
-        outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push=true
-
-    # Then extract the digest from the build output:
-    - name: 📌 Get Image Digest from Build
-      run: |
-        # The build step outputs metadata including the digest
-        IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
-        
-        if [[ -n "$IMAGE_DIGEST" ]]; then
-          IMAGE_WITH_DIGEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${IMAGE_DIGEST}"
-          echo "✅ Got digest from build: $IMAGE_DIGEST"
-        else
-          # Fallback: extract from build metadata
-          IMAGE_WITH_DIGEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
-          echo "⚠️ No digest from build, using tag: $IMAGE_WITH_DIGEST"
-        fi
-        
-        echo "IMAGE_WITH_DIGEST=$IMAGE_WITH_DIGEST" >> $GITHUB_ENV
-        echo "📌 Final image: $IMAGE_WITH_DIGEST"
 
     - name: 📌 Get Image Digest
-      id: digest
       run: |
-        DIGEST=$(az acr repository show-tags --name ${{ secrets.TF_ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --query "[?name=='${{ env.VERSION }}'].digest" -o tsv)
-        IMAGE_WITH_DIGEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+        IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
+        IMAGE_WITH_DIGEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${IMAGE_DIGEST}"
         echo "IMAGE_WITH_DIGEST=$IMAGE_WITH_DIGEST" >> $GITHUB_ENV
-        echo "📌 Image digest: $IMAGE_WITH_DIGEST"
+        echo "📌 Final image pinned by digest: $IMAGE_WITH_DIGEST"
+
 
     - name: ⚙️ Connect to AKS & Install Kustomize
       run: |
