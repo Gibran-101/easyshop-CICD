@@ -17,7 +17,7 @@ env:
   NAMESPACE: easyshop
 
 jobs:
-  deploy:
+  deploy-application:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
     
@@ -41,25 +41,42 @@ jobs:
       run: |
         VERSION="${GITHUB_SHA::8}"
         echo "VERSION=$VERSION" >> $GITHUB_ENV
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "📦 Using SHA version: $VERSION"
 
-    - name: 🐋 Build and Push Image
-      run: |
-        echo "🏗️ Building image..."
-        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} \
-          --build-arg GIT_SHA=${{ env.VERSION }} \
-          --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') .
-        
-        echo "🔑 Login to ACR..."
-        az acr login --name ${{ secrets.TF_ACR_NAME }}
-        
-        echo "🚀 Pushing image..."
-        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
-        
-        echo "✅ Image pushed: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
+    - name: 🐋 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
 
-    - name: ⚙️ Connect to AKS
+    - name: 🔑 Login to ACR
+      uses: azure/docker-login@v1
+      with:
+        login-server: ${{ env.REGISTRY }}
+        username: ${{ secrets.ARM_CLIENT_ID }}
+        password: ${{ secrets.ARM_CLIENT_SECRET }}
+
+    - name: 🏗️ Build and Push with Caching
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        build-args: |
+          GIT_SHA=${{ env.VERSION }}
+          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: 📌 Get Image Digest
+      id: digest
+      run: |
+        DIGEST=$(az acr repository show-tags --name ${{ secrets.TF_ACR_NAME }} --repository ${{ env.IMAGE_NAME }} --query "[?name=='${{ env.VERSION }}'].digest" -o tsv)
+        IMAGE_WITH_DIGEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${DIGEST}"
+        echo "IMAGE_WITH_DIGEST=$IMAGE_WITH_DIGEST" >> $GITHUB_ENV
+        echo "📌 Image digest: $IMAGE_WITH_DIGEST"
+
+    - name: ⚙️ Connect to AKS & Install Kustomize
       run: |
         echo "🔑 Getting AKS credentials..."
         az aks get-credentials \
@@ -67,42 +84,102 @@ jobs:
           --name ${{ env.AKS_CLUSTER_NAME }} \
           --overwrite-existing
         
-        kubectl cluster-info
+        echo "📦 Installing kustomize..."
+        curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+        sudo mv kustomize /usr/local/bin/
 
-    - name: 🚀 Deploy Application
+    - name: 🚀 Blue-Green Deployment
       run: |
-        echo "🚀 Deploying EasyShop application..."
+        echo "🚀 Starting Blue-Green Deployment..."
         
-        # Update image in kustomization.yaml
-        sed -i "s|newTag:.*|newTag: ${{ env.VERSION }}|g" kubernetes/kustomization.yaml
+        # Create namespace if it doesn't exist
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         
-        # Deploy using kustomize
-        kubectl apply -k kubernetes/
+        cd kubernetes
         
-        # Wait for deployment
-        kubectl rollout status deployment/easyshop -n ${{ env.NAMESPACE }}
+        # Determine which deployment to use (blue/green)
+        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
         
-        echo "✅ Application deployed successfully!"
+        if [[ "$CURRENT_DEPLOYMENT" == "easyshop-blue" ]]; then
+          TARGET_DEPLOYMENT="easyshop-green"
+          echo "🔄 Current: Blue, Switching to: Green"
+        else
+          TARGET_DEPLOYMENT="easyshop-blue"
+          echo "🔄 Current: Green, Switching to: Blue"
+        fi
+        
+        # Update image with digest pinning (safer than sed)
+        echo "📝 Updating image with digest pinning..."
+        kustomize edit set image ${{ env.IMAGE_NAME }}=${{ env.IMAGE_WITH_DIGEST }}
+        
+        # Deploy all resources (will fail fast if files missing)
+        echo "📦 Deploying all resources..."
+        kubectl apply -k .
+        
+        # Update the target deployment specifically
+        echo "🎯 Updating $TARGET_DEPLOYMENT..."
+        kubectl set image deployment/$TARGET_DEPLOYMENT easyshop=${{ env.IMAGE_WITH_DIGEST }} -n ${{ env.NAMESPACE }}
+        
+        # Wait for new deployment to be ready
+        echo "⏳ Waiting for $TARGET_DEPLOYMENT to be ready..."
+        if ! kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
+          echo "❌ Rollout failed! Debugging..."
+          echo "📦 Pod status:"
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
+          echo "📋 Pod descriptions:"
+          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
+          echo "📜 Recent logs:"
+          kubectl logs -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT --tail=50 || echo "No logs available"
+          exit 1
+        fi
+        
+        # Switch traffic to new deployment
+        echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
+        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} -p "{\"spec\": {\"selector\": {\"app\": \"$TARGET_DEPLOYMENT\"}}}"
+        
+        # Scale down old deployment
+        if [[ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]]; then
+          echo "📉 Scaling down old deployment: $CURRENT_DEPLOYMENT"
+          kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }}
+        fi
+        
+        echo "✅ Blue-Green deployment completed!"
+        echo "🎯 Active deployment: $TARGET_DEPLOYMENT"
 
     - name: 🔍 Verify Deployment
       run: |
         echo "🔍 Verifying deployment..."
         
         # Check pods
+        echo "📦 Pods in ${{ env.NAMESPACE }}:"
         kubectl get pods -n ${{ env.NAMESPACE }}
         
-        # Check ingress
+        # Check services
+        echo "🌐 Services in ${{ env.NAMESPACE }}:"
+        kubectl get svc -n ${{ env.NAMESPACE }}
+        
+        # Get the actual hostname from ingress
+        echo "🔗 Ingress in ${{ env.NAMESPACE }}:"
         kubectl get ingress -n ${{ env.NAMESPACE }}
         
-        echo "✅ Deployment verification complete!"
+        INGRESS_HOST=$(kubectl get ingress easyshop-ingress -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "${{ secrets.TF_DNS_ZONE_NAME }}")
+        echo "INGRESS_HOST=$INGRESS_HOST" >> $GITHUB_ENV
 
     - name: 📋 Deployment Summary
       run: |
-        echo "🎉 EasyShop Deployment Complete!"
-        echo "================================="
-        echo "🏷️  Version: ${{ env.VERSION }}"
+        echo "🎉 Blue-Green Deployment Complete!"
+        echo "=================================="
+        echo "🏷️  SHA Version: ${{ env.VERSION }}"
         echo "🐋 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
+        echo "📌 Digest: ${{ env.IMAGE_WITH_DIGEST }}"
         echo "🎯 Cluster: ${{ env.AKS_CLUSTER_NAME }}"
         echo "🏠 Namespace: ${{ env.NAMESPACE }}"
-        echo "🌐 URL: https://${{ secrets.TF_DNS_ZONE_NAME }}"
-        echo "================================="
+        echo "🌐 URL: https://${{ env.INGRESS_HOST }}"
+        echo "📍 Commit: ${{ github.sha }}"
+        echo ""
+        echo "🔄 Blue-Green Strategy:"
+        echo "  ✅ Deployed to inactive slot with digest pinning"
+        echo "  ✅ Verified health and readiness probes"
+        echo "  ✅ Switched traffic with zero downtime"
+        echo "  ✅ Scaled down old deployment"
+        echo "=================================="
