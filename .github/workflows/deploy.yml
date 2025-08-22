@@ -58,6 +58,7 @@ jobs:
         az acr login --name ${{ secrets.TF_ACR_NAME }}
 
     # ✅ FIXED: Build and Push with ACR registry cache (more reliable than GHA cache for ACR)
+    # Modify your existing build step to capture the digest:
     - name: 🏗️ Build and Push with Caching
       id: build
       uses: docker/build-push-action@v5
@@ -71,9 +72,27 @@ jobs:
         build-args: |
           GIT_SHA=${{ env.VERSION }}
           BUILD_DATE=${{ github.event.head_commit.timestamp }}
-        # Use ACR registry cache instead of GitHub Actions cache
         cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache
         cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache,mode=max
+        outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push=true
+
+    # Then extract the digest from the build output:
+    - name: 📌 Get Image Digest from Build
+      run: |
+        # The build step outputs metadata including the digest
+        IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
+        
+        if [[ -n "$IMAGE_DIGEST" ]]; then
+          IMAGE_WITH_DIGEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${IMAGE_DIGEST}"
+          echo "✅ Got digest from build: $IMAGE_DIGEST"
+        else
+          # Fallback: extract from build metadata
+          IMAGE_WITH_DIGEST="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
+          echo "⚠️ No digest from build, using tag: $IMAGE_WITH_DIGEST"
+        fi
+        
+        echo "IMAGE_WITH_DIGEST=$IMAGE_WITH_DIGEST" >> $GITHUB_ENV
+        echo "📌 Final image: $IMAGE_WITH_DIGEST"
 
     - name: 📌 Get Image Digest
       id: digest
