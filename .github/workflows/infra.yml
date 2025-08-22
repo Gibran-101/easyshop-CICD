@@ -117,12 +117,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fix script permissions
-        run: |
-          find . -name "*.sh" -type f -exec chmod +x {} \;
-          echo " All script permissions fixed"
-          ls -la ../scripts/install-traefik.sh
-
       - uses: actions/download-artifact@v4
         with:
           name: terraform-config
@@ -169,7 +163,6 @@ jobs:
           git add kubernetes/15-keyvault-secret-provider.yml
           git diff --staged --quiet || git commit -m "Update SecretProviderClass with Terraform outputs [skip ci]"
           git push
-
 
   deploy-argocd:
     name: 'Deploy ArgoCD to AKS'
@@ -267,4 +260,4 @@ jobs:
               "managed_identity_client_id": "${{ needs.apply.outputs.managed_identity_client_id }}",
               "tenant_id": "${{ needs.apply.outputs.tenant_id }}"
             }
-            
+              
