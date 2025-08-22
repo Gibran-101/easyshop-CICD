@@ -129,7 +129,7 @@ jobs:
         
         # Update image with digest pinning (safer than sed)
         echo "📝 Updating image with digest pinning..."
-        kustomize edit set image ${{ env.IMAGE_NAME }}=${{ env.IMAGE_WITH_DIGEST }}
+        kustomize edit set image gibranf/easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
         # Deploy all resources (will fail fast if files missing)
         echo "📦 Deploying all resources..."
