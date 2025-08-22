@@ -1,4 +1,4 @@
-name: EasyShop Application Deployment (GitOps)
+name: EasyShop Application Deployment
 
 on:
   workflow_dispatch:
@@ -15,22 +15,13 @@ env:
   AKS_CLUSTER_NAME: ${{ secrets.TF_AKS_CLUSTER_NAME }}
   RESOURCE_GROUP: ${{ secrets.TF_PROJECT_NAME }}-rg
   NAMESPACE: easyshop
-  ARGOCD_NAMESPACE: argocd
 
 jobs:
-  build-and-setup-gitops:
+  deploy:
     runs-on: ubuntu-latest
-    # Only run if the triggering workflow succeeded or if manually triggered
     if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
     
-    outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
-      version: ${{ steps.version.outputs.version }}
-    
     steps:
-    # ========================
-    # PHASE 1: Environment Setup
-    # ========================
     - name: 🚀 Checkout Repository
       uses: actions/checkout@v4
 
@@ -45,88 +36,30 @@ jobs:
             "tenantId": "${{ secrets.ARM_TENANT_ID }}"
           }
 
-    - name: 🎯 Generate SHA-based Version
+    - name: 🎯 Generate SHA Version
       id: version
       run: |
-        echo "BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
-        echo "GIT_SHA=${GITHUB_SHA::8}" >> $GITHUB_ENV
         VERSION="${GITHUB_SHA::8}"
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "📦 Generated SHA-based version: $VERSION"
+        echo "📦 Using SHA version: $VERSION"
 
-    # ========================
-    # PHASE 2: Container Build & Registry Push
-    # ========================
-    - name: 🐋 Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+    - name: 🐋 Build and Push Image
+      run: |
+        echo "🏗️ Building image..."
+        docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }} \
+          --build-arg GIT_SHA=${{ env.VERSION }} \
+          --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') .
+        
+        echo "🔑 Login to ACR..."
+        az acr login --name ${{ secrets.TF_ACR_NAME }}
+        
+        echo "🚀 Pushing image..."
+        docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+        
+        echo "✅ Image pushed: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
 
-    - name: 🔍 Generate Image Metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        tags: |
-          type=raw,value=latest,enable={{is_default_branch}}
-          type=raw,value=${{ env.VERSION }}
-
-    - name: 🔑 Login to Azure Container Registry
-      uses: azure/docker-login@v1
-      with:
-        login-server: ${{ env.REGISTRY }}
-        username: ${{ secrets.ARM_CLIENT_ID }}
-        password: ${{ secrets.ARM_CLIENT_SECRET }}
-
-    - name: 🏗️ Build Docker Image (No Push Yet)
-      id: build
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        platforms: linux/amd64
-        push: false
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        build-args: |
-          BUILD_DATE=${{ env.BUILD_DATE }}
-          GIT_SHA=${{ env.GIT_SHA }}
-          VERSION=${{ env.VERSION }}
-        outputs: type=docker,dest=/tmp/easyshop-image.tar
-
-    - name: 🛡️ Run Security Scan on Built Image
-      uses: aquasecurity/trivy-action@master
-      with:
-        input: /tmp/easyshop-image.tar
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-      continue-on-error: true
-
-    - name: 📊 Upload Security Scan Results
-      uses: github/codeql-action/upload-sarif@v3
-      if: always()
-      with:
-        sarif_file: 'trivy-results.sarif'
-      continue-on-error: true
-
-    - name: 🚀 Push Docker Image to ACR (After Security Check)
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        platforms: linux/amd64
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        build-args: |
-          BUILD_DATE=${{ env.BUILD_DATE }}
-          GIT_SHA=${{ env.GIT_SHA }}
-          VERSION=${{ env.VERSION }}
-
-    # ========================
-    # PHASE 3: AKS Setup & AGIC Deployment
-    # ========================
-    - name: ⚙️ Get AKS Credentials & Setup Namespace
+    - name: ⚙️ Connect to AKS
       run: |
         echo "🔑 Getting AKS credentials..."
         az aks get-credentials \
@@ -134,289 +67,42 @@ jobs:
           --name ${{ env.AKS_CLUSTER_NAME }} \
           --overwrite-existing
         
-        echo "✅ Successfully connected to AKS cluster"
         kubectl cluster-info
-        
-        # Create EasyShop namespace early to avoid race conditions
-        echo "🏠 Creating EasyShop namespace..."
-        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-        echo "✅ Namespace ${{ env.NAMESPACE }} ready"
 
-    - name: 🔗 Deploy AGIC (Application Gateway Ingress Controller)
+    - name: 🚀 Deploy Application
       run: |
-        echo "🚀 Deploying AGIC to AKS cluster..."
+        echo "🚀 Deploying EasyShop application..."
         
-        # Get infrastructure details
-        SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-        TENANT_ID=$(az account show --query tenantId -o tsv)
-        APP_GATEWAY_NAME="${{ secrets.TF_PROJECT_NAME }}-app-gateway"
+        # Update image in kustomization.yaml
+        sed -i "s|newTag:.*|newTag: ${{ env.VERSION }}|g" kubernetes/kustomization.yaml
         
-        echo "📋 AGIC Configuration:"
-        echo "  App Gateway: $APP_GATEWAY_NAME"
-        echo "  Resource Group: ${{ env.RESOURCE_GROUP }}"
-        echo "  Subscription: $SUBSCRIPTION_ID"
-        echo "  Watch Namespace: ${{ env.NAMESPACE }}"
+        # Deploy using kustomize
+        kubectl apply -k kubernetes/
         
-        # Deploy AGIC components
-        kubectl apply -f - <<EOF
-        apiVersion: v1
-        kind: ServiceAccount
-        metadata:
-          name: ingress-azure
-          namespace: default
-        ---
-        apiVersion: rbac.authorization.k8s.io/v1
-        kind: ClusterRole
-        metadata:
-          name: ingress-azure
-        rules:
-        - apiGroups: [""]
-          resources: ["events"]
-          verbs: ["create", "patch"]
-        - apiGroups: [""]
-          resources: ["pods", "services", "endpoints", "secrets"]
-          verbs: ["get", "list", "watch"]
-        - apiGroups: ["networking.k8s.io"]
-          resources: ["ingresses"]
-          verbs: ["get", "list", "watch"]
-        - apiGroups: ["networking.k8s.io"]
-          resources: ["ingresses/status"]
-          verbs: ["update"]
-        ---
-        apiVersion: rbac.authorization.k8s.io/v1
-        kind: ClusterRoleBinding
-        metadata:
-          name: ingress-azure
-        roleRef:
-          apiGroup: rbac.authorization.k8s.io
-          kind: ClusterRole
-          name: ingress-azure
-        subjects:
-        - kind: ServiceAccount
-          name: ingress-azure
-          namespace: default
-        ---
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: ingress-azure-config
-          namespace: default
-        data:
-          appgw.name: "$APP_GATEWAY_NAME"
-          appgw.resourceGroup: "${{ env.RESOURCE_GROUP }}"
-          appgw.subscriptionId: "$SUBSCRIPTION_ID"
-          armAuth.type: "servicePrincipal"
-          kubernetes.watchNamespace: "${{ env.NAMESPACE }}"
-          verbosityLevel: "3"
-        ---
-        apiVersion: v1
-        kind: Secret
-        metadata:
-          name: ingress-azure-auth
-          namespace: default
-        type: Opaque
-        stringData:
-          secretJSON: |
-            {
-              "clientId": "${{ secrets.ARM_CLIENT_ID }}",
-              "clientSecret": "${{ secrets.ARM_CLIENT_SECRET }}",
-              "subscriptionId": "$SUBSCRIPTION_ID",
-              "tenantId": "$TENANT_ID",
-              "activeDirectoryEndpointUrl": "https://login.microsoftonline.com",
-              "resourceManagerEndpointUrl": "https://management.azure.com/",
-              "activeDirectoryGraphResourceId": "https://graph.windows.net/",
-              "sqlManagementEndpointUrl": "https://management.core.windows.net:8443/",
-              "galleryEndpointUrl": "https://gallery.azure.com/",
-              "managementEndpointUrl": "https://management.core.windows.net/"
-            }
-        ---
-        apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: ingress-azure
-          namespace: default
-          labels:
-            app: ingress-azure
-        spec:
-          replicas: 1
-          selector:
-            matchLabels:
-              app: ingress-azure
-          template:
-            metadata:
-              labels:
-                app: ingress-azure
-            spec:
-              serviceAccountName: ingress-azure
-              containers:
-              - name: ingress-azure
-                image: mcr.microsoft.com/azure-application-gateway/kubernetes-ingress:1.7.5
-                env:
-                - name: AZURE_CLIENT_ID
-                  value: "${{ secrets.ARM_CLIENT_ID }}"
-                - name: AZURE_CLIENT_SECRET
-                  value: "${{ secrets.ARM_CLIENT_SECRET }}"
-                volumeMounts:
-                - name: config
-                  mountPath: /etc/config
-                  readOnly: true
-                resources:
-                  requests:
-                    cpu: 100m
-                    memory: 128Mi
-                  limits:
-                    cpu: 500m
-                    memory: 512Mi
-                livenessProbe:
-                  httpGet:
-                    path: /health
-                    port: 8080
-                  initialDelaySeconds: 30
-                  periodSeconds: 30
-                readinessProbe:
-                  httpGet:
-                    path: /health
-                    port: 8080
-                  initialDelaySeconds: 5
-                  periodSeconds: 10
-              volumes:
-              - name: config
-                configMap:
-                  name: ingress-azure-config
-        EOF
+        # Wait for deployment
+        kubectl rollout status deployment/easyshop -n ${{ env.NAMESPACE }}
         
-        # Wait for AGIC to be ready
-        echo "⏳ Waiting for AGIC pod to be ready..."
-        kubectl wait --for=condition=ready pod -l app=ingress-azure --timeout=300s
-        
-        # Verify AGIC status
-        kubectl get pods -l app=ingress-azure
-        echo "✅ AGIC deployed and ready!"
+        echo "✅ Application deployed successfully!"
 
-    # ========================
-    # PHASE 4: Create ArgoCD Application (NOT ArgoCD installation)
-    # ========================
-    - name: 🔍 Verify ArgoCD is Ready (from infra.yml)
+    - name: 🔍 Verify Deployment
       run: |
-        echo "🔍 Verifying ArgoCD installation from infra.yml..."
+        echo "🔍 Verifying deployment..."
         
-        # Check if ArgoCD is installed and ready
-        kubectl get pods -n ${{ env.ARGOCD_NAMESPACE }} -l app.kubernetes.io/name=argocd-server
-        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-server -n ${{ env.ARGOCD_NAMESPACE }} --timeout=300s
+        # Check pods
+        kubectl get pods -n ${{ env.NAMESPACE }}
         
-        # Check if ArgoCD Image Updater is ready
-        kubectl get pods -n ${{ env.ARGOCD_NAMESPACE }} -l app.kubernetes.io/name=argocd-image-updater
-        kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=argocd-image-updater -n ${{ env.ARGOCD_NAMESPACE }} --timeout=300s
+        # Check ingress
+        kubectl get ingress -n ${{ env.NAMESPACE }}
         
-        echo "✅ ArgoCD and Image Updater are ready (installed by infra.yml)"
-
-    - name: 📱 Create EasyShop ArgoCD Application
-      run: |
-        echo "🚀 Creating EasyShop ArgoCD Application..."
-        
-        # Create EasyShop application with Image Updater annotations
-        # Using SHA-based tagging strategy as discussed
-        kubectl apply -f - <<EOF
-        apiVersion: argoproj.io/v1alpha1
-        kind: Application
-        metadata:
-          name: easyshop
-          namespace: ${{ env.ARGOCD_NAMESPACE }}
-          annotations:
-            # ArgoCD Image Updater configuration for SHA-based tagging
-            argocd-image-updater.argoproj.io/image-list: easyshop=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-            argocd-image-updater.argoproj.io/easyshop.update-strategy: digest
-            argocd-image-updater.argoproj.io/easyshop.allow-tags: regexp:^[a-f0-9]{7,40}$,latest
-            argocd-image-updater.argoproj.io/write-back-method: git
-            argocd-image-updater.argoproj.io/write-back-target: kustomization
-            argocd-image-updater.argoproj.io/git-branch: main
-            argocd-image-updater.argoproj.io/git-commit-message: "🤖 [ArgoCD Image Updater] Update {{.AppName}} image to {{.NewTag}}"
-        spec:
-          project: default
-          source:
-            repoURL: ${{ github.server_url }}/${{ github.repository }}
-            targetRevision: main
-            path: kubernetes
-            # Use Kustomize for better image management
-            kustomize:
-              images:
-              - ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
-          destination:
-            server: https://kubernetes.default.svc
-            namespace: ${{ env.NAMESPACE }}
-          syncPolicy:
-            automated:
-              prune: true
-              selfHeal: true
-              allowEmpty: false
-            syncOptions:
-            - CreateNamespace=true
-            - PrunePropagationPolicy=foreground
-            - PruneLast=true
-            retry:
-              limit: 5
-              backoff:
-                duration: 5s
-                factor: 2
-                maxDuration: 3m
-        EOF
-        
-        # Wait a moment for application to be created
-        sleep 10
-        
-        # Check application status
-        kubectl get applications -n ${{ env.ARGOCD_NAMESPACE }}
-        echo "✅ EasyShop ArgoCD Application created!"
-
-    # ========================
-    # PHASE 5: Verification & Status
-    # ========================
-    - name: 🔍 Verify GitOps Setup
-      run: |
-        echo "🔍 Verifying GitOps setup..."
-        
-        # Check ArgoCD Application status
-        echo "📊 ArgoCD Application Status:"
-        kubectl get applications -n ${{ env.ARGOCD_NAMESPACE }}
-        
-        # Check ArgoCD Image Updater status (should be installed by infra.yml)
-        echo "📊 ArgoCD Image Updater Status:"
-        kubectl get pods -n ${{ env.ARGOCD_NAMESPACE }} -l app.kubernetes.io/name=argocd-image-updater
-        
-        # Check AGIC status
-        echo "📊 AGIC Status:"
-        kubectl get pods -l app=ingress-azure
-        
-        # Check if EasyShop namespace was created
-        kubectl get namespace ${{ env.NAMESPACE }} || echo "EasyShop namespace will be created on first sync"
-        
-        echo "✅ GitOps verification completed!"
+        echo "✅ Deployment verification complete!"
 
     - name: 📋 Deployment Summary
       run: |
-        echo "🎉 EasyShop GitOps Deployment Complete!"
-        echo "====================================="
-        echo "🏷️  SHA Version: ${{ env.VERSION }}"
+        echo "🎉 EasyShop Deployment Complete!"
+        echo "================================="
+        echo "🏷️  Version: ${{ env.VERSION }}"
         echo "🐋 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
-        echo "📦 Registry: ${{ env.REGISTRY }}"
         echo "🎯 Cluster: ${{ env.AKS_CLUSTER_NAME }}"
         echo "🏠 Namespace: ${{ env.NAMESPACE }}"
-        echo "🌐 Domain: https://${{ secrets.TF_DNS_ZONE_NAME }}"
-        echo "🔗 Commit: ${{ github.sha }}"
-        echo "🏃 Build: #${{ github.run_number }}"
-        echo "⏰ Built at: $(date -u)"
-        echo ""
-        echo "🚀 What This Workflow Did:"
-        echo "  1. ✅ Built image with SHA tag: ${{ env.VERSION }}"
-        echo "  2. ✅ Pushed to ACR: ${{ env.REGISTRY }}"
-        echo "  3. ✅ Deployed AGIC for Application Gateway integration"
-        echo "  4. ✅ Created ArgoCD Application (ArgoCD installed by infra.yml)"
-        echo "  5. ✅ Configured Image Updater for SHA-based updates"
-        echo ""
-        echo "📡 GitOps Flow (Automatic from here):"
-        echo "  • ArgoCD Image Updater monitors: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-        echo "  • Detects SHA tags matching: ^[a-f0-9]{7,40}$ or latest"
-        echo "  • Updates kustomization.yaml in Git automatically"
-        echo "  • ArgoCD syncs changes to cluster"
-        echo "====================================="
-        echo "✅ GitOps pipeline with SHA-based versioning is active!"
+        echo "🌐 URL: https://${{ secrets.TF_DNS_ZONE_NAME }}"
+        echo "================================="
