@@ -116,6 +116,20 @@ jobs:
         
         cd kubernetes
         
+        # Test kustomize build first
+        echo "🔍 Testing kustomize build..."
+        if ! kustomize build . > /tmp/manifests.yaml; then
+          echo "❌ Kustomize build failed! Debugging..."
+          echo "📋 Current directory contents:"
+          ls -la
+          echo "📝 kustomization.yaml content:"
+          cat kustomization.yaml
+          exit 1
+        fi
+        
+        echo "✅ Kustomize build successful"
+        echo "📊 Generated $(cat /tmp/manifests.yaml | grep -c '^---') resources"
+        
         # Determine which deployment to use (blue/green)
         CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
         
@@ -127,28 +141,13 @@ jobs:
           echo "🔄 Current: Green, Switching to: Blue"
         fi
         
-        # ✅ FIXED: Update image with correct image name for kustomize
-        echo "📝 Updating image with digest pinning..."
-        kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
+        # Update image with proper format for kustomize
+        echo "📝 Updating image..."
+        kustomize edit set image gibranf/easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
-        # 🐛 DEBUG: Let's see what kustomize is generating
-        echo "🔍 DEBUG: Checking kustomization.yaml after image update:"
-        cat kustomization.yaml
-        echo ""
-        echo "🔍 DEBUG: Testing kustomize build (dry run):"
-        kustomize build . || echo "❌ Kustomize build failed!"
-        echo ""
-        echo "🔍 DEBUG: List of files in kubernetes directory:"
-        ls -la
-        echo ""
-        
-        # Deploy all resources (will fail fast if files missing)
-        echo "📦 Deploying all resources..."
-        kubectl apply -k .
-        
-        # Update the target deployment specifically
-        echo "🎯 Updating $TARGET_DEPLOYMENT..."
-        kubectl set image deployment/$TARGET_DEPLOYMENT easyshop=${{ env.IMAGE_WITH_DIGEST }} -n ${{ env.NAMESPACE }}
+        # Build and apply manifests
+        echo "📦 Building and applying manifests..."
+        kustomize build . | kubectl apply -f -
         
         # Wait for new deployment to be ready
         echo "⏳ Waiting for $TARGET_DEPLOYMENT to be ready..."
@@ -157,7 +156,7 @@ jobs:
           echo "📦 Pod status:"
           kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
           echo "📋 Pod descriptions:"
-          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
+          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT | head -50
           echo "📜 Recent logs:"
           kubectl logs -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT --tail=50 || echo "No logs available"
           exit 1
@@ -167,7 +166,7 @@ jobs:
         echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
         kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} -p "{\"spec\": {\"selector\": {\"app\": \"$TARGET_DEPLOYMENT\"}}}"
         
-        # Scale down old deployment
+        # Scale down old deployment after successful switch
         if [[ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]]; then
           echo "📉 Scaling down old deployment: $CURRENT_DEPLOYMENT"
           kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }}
