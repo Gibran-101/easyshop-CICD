@@ -129,7 +129,7 @@ jobs:
         
         # ✅ FIXED: Update image with correct image name for kustomize
         echo "📝 Updating image with digest pinning..."
-        kustomize edit set image gibranf/easyshop=${{ env.IMAGE_WITH_DIGEST }}
+        kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
         # 🐛 DEBUG: Let's see what kustomize is generating
         echo "🔍 DEBUG: Checking kustomization.yaml after image update:"

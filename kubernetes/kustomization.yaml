@@ -21,7 +21,7 @@ resources:
 - 12-migration-job.yaml
 - 13-redis-service.yaml
 - 14-redis-deployment.yaml     # Updated with Key Vault secrets + authentication + ConfigMap
-- cert-manager-issuer.yaml     # Let's Encrypt production issuer only
+- cert-manager-issuer.yaml     # Let's Encrypt production issuer onlykustomize edit
 - easyshop-certificate.yaml    # SSL certificates for buildandship.space
 
 # Common labels applied to all resources - FIXED deprecated warning
@@ -38,8 +38,9 @@ commonAnnotations:
 
 # Images to update (semantic versioning for better tracking)
 images:
-- name: gibranf/easyshop
-  newTag: latest  # This will be updated by your deploy script
+- name: easyshop
+  newName: ***.azurecr.io/easyshop  # Your ACR registry
+  newTag: latest
 
 # Resource transformations
 patches:
