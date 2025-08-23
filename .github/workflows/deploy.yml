@@ -106,131 +106,88 @@ jobs:
         echo "📦 Installing kustomize..."
         curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
         sudo mv kustomize /usr/local/bin/
-
+#====================================================================
+#====================================================================
     - name: 🚀 Blue-Green Deployment
       run: |
         set -e
         
-        echo "🚀 Starting Blue-Green Deployment with Enhanced Debugging..."
+        echo "🚀 Starting Blue-Green Deployment..."
         
+        # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         
         cd kubernetes
         
-        # ==========================================
-        # PHASE 1: FILE VALIDATION (SKIP NON-K8s FILES)
-        # ==========================================
-        echo "📋 Phase 1: Validating Kubernetes resource files..."
-        failed_files=()
-        
-        # Files to SKIP - these are NOT Kubernetes resources
-        skip_files=("kustomization.yaml" "00-kind-config.yaml")
-        
-        for file in *.yaml *.yml; do
-          if [[ -f "$file" ]]; then
-            # Check if this file should be skipped
-            skip=false
-            for skip_file in "${skip_files[@]}"; do
-              if [[ "$file" == "$skip_file" ]]; then
-                skip=true
-                echo "  Skipping $file (not a K8s resource)"
-                break
-              fi
-            done
-            
-            # Only validate actual Kubernetes resources
-            if [[ "$skip" == false ]]; then
-              echo -n "  Testing $file... "
-              if kubectl --dry-run=client apply -f "$file" &>/tmp/file-test.log; then
-                echo "✅"
-              else
-                echo "❌"
-                failed_files+=("$file")
-                echo "    Error in $file:"
-                head -3 /tmp/file-test.log | sed 's/^/      /'
-              fi
-            fi
-          fi
-        done
-        
-        if [[ ${#failed_files[@]} -gt 0 ]]; then
-          echo "🚨 FAILED FILES: ${failed_files[*]}"
-          echo "❌ Cannot proceed with invalid YAML files!"
-          exit 1
-        fi
-        
-        echo "✅ All Kubernetes resource files are valid"
-        
-        # ==========================================
-        # PHASE 2: KUSTOMIZATION BUILD TEST
-        # ==========================================
-        echo ""
-        echo "📝 Phase 2: Testing kustomization build..."
+        # Show current kustomization
+        echo "📝 Current kustomization.yaml:"
+        cat kustomization.yaml
         
         # Update image
+        echo ""
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
         kustomize edit set image gibranf/easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
         # Test kustomize build
-        if ! kustomize build . > /tmp/build-output.yaml 2>/tmp/build-error.log; then
-          echo "❌ Kustomize build failed!"
-          echo "Error details:"
-          cat /tmp/build-error.log
-          exit 1
-        fi
+        echo ""
+        echo "🔍 Testing kustomize build..."
+        kustomize build . > /tmp/manifests.yaml
         
-        # Count resources
-        resource_count=$(grep -c "^kind:" /tmp/build-output.yaml 2>/dev/null || echo "0")
-        echo "📊 Generated $resource_count resources"
+        # Simple resource count
+        RESOURCE_COUNT=$(cat /tmp/manifests.yaml | grep "^kind:" | wc -l)
+        echo "📊 Generated: $RESOURCE_COUNT resources"
         
-        if [[ $resource_count -eq 0 ]]; then
+        # Show what we're deploying
+        echo ""
+        echo "🔍 Resources to deploy:"
+        grep "^kind:" /tmp/manifests.yaml | sort | uniq -c
+        
+        if [ "$RESOURCE_COUNT" -eq 0 ]; then
           echo "❌ No resources generated!"
           echo "Build output:"
-          head -50 /tmp/build-output.yaml
+          cat /tmp/manifests.yaml
           exit 1
         fi
         
-        echo "✅ Kustomize build successful!"
-        
-        # ==========================================
-        # PHASE 3: DEPLOYMENT
-        # ==========================================
-        echo ""
-        echo "🚀 Phase 3: Executing deployment..."
-        
         # Determine target deployment
-        CURRENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
+        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
         
-        if [[ "$CURRENT" == "easyshop-blue" ]]; then
-          TARGET="easyshop-green"
-          echo "🔄 Switching to GREEN"
+        if [ "$CURRENT_DEPLOYMENT" = "easyshop-blue" ]; then
+          TARGET_DEPLOYMENT="easyshop-green"
+          echo "🔄 Deploying to GREEN"
         else
-          TARGET="easyshop-blue"  
-          echo "🔄 Switching to BLUE"
+          TARGET_DEPLOYMENT="easyshop-blue"
+          echo "🔄 Deploying to BLUE"
         fi
         
         # Apply manifests
-        echo "📦 Applying $resource_count resources..."
-        kustomize build . | kubectl apply -f -
+        echo ""
+        echo "📦 Applying manifests..."
+        kubectl apply -f /tmp/manifests.yaml
         
         # Wait for deployment
-        echo "⏳ Waiting for $TARGET to be ready..."
-        kubectl rollout status deployment/$TARGET -n ${{ env.NAMESPACE }} --timeout=300s
+        echo ""
+        echo "⏳ Waiting for $TARGET_DEPLOYMENT..."
+        kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s
         
         # Switch traffic
-        echo "🔀 Switching service to $TARGET..."
-        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} -p '{"spec":{"selector":{"app":"'$TARGET'"}}}'
+        echo ""
+        echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
+        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
+          -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
         
         # Scale down old deployment
-        if [[ "$CURRENT" != "$TARGET" ]]; then
-          echo "📉 Scaling down $CURRENT..."
-          kubectl scale deployment/$CURRENT --replicas=0 -n ${{ env.NAMESPACE }}
+        if [ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]; then
+          echo "📉 Scaling down $CURRENT_DEPLOYMENT..."
+          kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }}
         fi
         
         echo ""
-        echo "✅ BLUE-GREEN DEPLOYMENT COMPLETED!"
-        echo "🎯 Active deployment: $TARGET"
-        echo "📊 Resources deployed: $resource_count"
+        echo "✅ Deployment completed!"
+        echo "🎯 Active: $TARGET_DEPLOYMENT"
+        echo "📊 Resources: $RESOURCE_COUNT"
+#====================================================================
+#====================================================================
 
     - name: 🔍 Verify Deployment
       run: |
