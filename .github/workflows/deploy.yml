@@ -144,7 +144,7 @@ jobs:
         
         # Deploy all resources (will fail fast if files missing)
         echo "📦 Deploying all resources..."
-        kubectl apply -k .
+        kubectl apply -k kubernetes/
         
         # Update the target deployment specifically
         echo "🎯 Updating $TARGET_DEPLOYMENT..."
