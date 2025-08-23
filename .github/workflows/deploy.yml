@@ -109,71 +109,252 @@ jobs:
 
     - name: 🚀 Blue-Green Deployment
       run: |
-        echo "🚀 Starting Blue-Green Deployment..."
+        set -e  # Exit on any error
+        
+        echo "🚀 Starting Blue-Green Deployment with Enhanced Debugging..."
         
         # Create namespace if it doesn't exist
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         
         cd kubernetes
         
-        # Test kustomize build first
-        echo "🔍 Testing kustomize build..."
-        if ! kustomize build . > /tmp/manifests.yaml; then
-          echo "❌ Kustomize build failed! Debugging..."
-          echo "📋 Current directory contents:"
-          ls -la
-          echo "📝 kustomization.yaml content:"
+        # ==========================================
+        # PHASE 1: FILE VALIDATION
+        # ==========================================
+        echo "📋 Phase 1: Validating individual YAML files..."
+        failed_files=()
+        
+        for file in *.yaml *.yml; do
+          if [[ -f "$file" ]]; then
+            echo -n "  Testing $file... "
+            if kubectl --dry-run=client apply -f "$file" &>/tmp/file-test.log; then
+              echo "✅"
+            else
+              echo "❌"
+              failed_files+=("$file")
+              echo "    Error in $file:"
+              head -3 /tmp/file-test.log | sed 's/^/      /'
+            fi
+          fi
+        done
+        
+        if [[ ${#failed_files[@]} -gt 0 ]]; then
+          echo "🚨 FAILED FILES: ${failed_files[*]}"
+          echo "❌ Cannot proceed with invalid YAML files!"
+          exit 1
+        fi
+        
+        echo "✅ All individual files are valid YAML"
+        
+        # ==========================================
+        # PHASE 2: KUSTOMIZATION SYNTAX CHECK
+        # ==========================================
+        echo ""
+        echo "📝 Phase 2: Checking kustomization.yaml syntax..."
+        
+        # Check if kustomization.yaml is valid YAML
+        if ! yq eval '.' kustomization.yaml >/dev/null 2>/tmp/yaml-check.log; then
+          echo "❌ kustomization.yaml is not valid YAML:"
+          cat /tmp/yaml-check.log
+          exit 1
+        fi
+        
+        echo "✅ kustomization.yaml is valid YAML"
+        
+        # Check for encoding issues
+        if file kustomization.yaml | grep -q "with BOM"; then
+          echo "⚠️  kustomization.yaml has BOM - removing..."
+          sed -i '1s/^\xEF\xBB\xBF//' kustomization.yaml
+        fi
+        
+        if grep -q $'\r' kustomization.yaml; then
+          echo "⚠️  kustomization.yaml has CRLF - converting to LF..."
+          sed -i 's/\r$//' kustomization.yaml
+        fi
+        
+        # ==========================================
+        # PHASE 3: INCREMENTAL RESOURCE TESTING
+        # ==========================================
+        echo ""
+        echo "🔍 Phase 3: Testing resources incrementally..."
+        
+        # Create minimal test kustomization
+        cat > kustomization-debug.yaml << 'EOF'
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+        namespace: easyshop
+        resources: []
+        EOF
+        
+        # Resources in order of dependency
+        test_resources=(
+          "01-namespace.yaml"
+          "00-priority-class.yaml" 
+          "04-configmap.yaml"
+          "05-secrets.yaml"
+          "15-keyvault-secret-provider.yaml"
+          "06-mongodb-service.yaml"
+          "07-mongodb-statefulset.yaml"
+          "13-redis-service.yaml"
+          "14-redis-deployment.yaml"
+          "08a-blue-deployment.yml"
+          "08b-green-deployment.yaml"
+          "09-easyshop-service.yaml"
+          "11-hpa.yaml"
+          "12-migration-job.yaml"
+          "10-ingress.yaml"
+          "cert-manager-issuer.yaml"
+          "easyshop-certificate.yaml"
+        )
+        
+        total_resources=0
+        for resource in "${test_resources[@]}"; do
+          if [[ -f "$resource" ]]; then
+            echo -n "  Adding $resource... "
+            
+            # Add resource to test kustomization
+            yq eval ".resources += [\"$resource\"]" kustomization-debug.yaml -i
+            
+            # Test build
+            if kustomize build kustomization-debug.yaml > /tmp/incremental-test.yaml 2>/tmp/incremental-error.log; then
+              new_count=$(grep -c "^kind:" /tmp/incremental-test.yaml 2>/dev/null || echo "0")
+              echo "✅ (total: $new_count resources)"
+              total_resources=$new_count
+            else
+              echo "❌ THIS RESOURCE BREAKS KUSTOMIZE!"
+              echo "      Error details:"
+              cat /tmp/incremental-error.log | head -5 | sed 's/^/        /'
+              echo ""
+              echo "      Resource preview:"
+              head -15 "$resource" | sed 's/^/        /'
+              echo ""
+              echo "🚨 CULPRIT FOUND: $resource"
+              exit 1
+            fi
+          else
+            echo "  ⚠️  $resource - file not found, skipping"
+          fi
+        done
+        
+        echo ""
+        echo "📊 Incremental test result: $total_resources total resources"
+        
+        # ==========================================
+        # PHASE 4: FULL KUSTOMIZATION TEST
+        # ==========================================
+        echo ""
+        echo "🔍 Phase 4: Testing full kustomization..."
+        
+        # Show current kustomization content
+        echo "📝 Current kustomization.yaml content:"
+        echo "----------------------------------------"
+        cat kustomization.yaml
+        echo "----------------------------------------"
+        
+        # Update image first
+        echo ""
+        echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
+        kustomize edit set image gibranf/easyshop=${{ env.IMAGE_WITH_DIGEST }}
+        
+        # Test full build with verbose output
+        echo ""
+        echo "🔍 Testing full kustomize build..."
+        if ! kustomize build --load-restrictor LoadRestrictionsNone . > /tmp/full-build.yaml 2>/tmp/full-error.log; then
+          echo "❌ FULL BUILD FAILED!"
+          echo "Error details:"
+          cat /tmp/full-error.log
+          echo ""
+          echo "Kustomization after image update:"
           cat kustomization.yaml
           exit 1
         fi
         
-        echo "✅ Kustomize build successful"
-        echo "📊 Generated $(cat /tmp/manifests.yaml | grep -c '^---') resources"
+        # Count final resources
+        final_count=$(grep -c "^kind:" /tmp/full-build.yaml 2>/dev/null || echo "0")
+        yaml_docs=$(grep -c "^---" /tmp/full-build.yaml 2>/dev/null || echo "0")
         
-        # Determine which deployment to use (blue/green)
+        echo "📊 Full build results:"
+        echo "  - Kubernetes resources (kind:): $final_count"
+        echo "  - YAML documents (---): $yaml_docs"
+        echo "  - Total file size: $(wc -c < /tmp/full-build.yaml) bytes"
+        
+        if [[ $final_count -eq 0 ]]; then
+          echo ""
+          echo "❌ ZERO RESOURCES GENERATED!"
+          echo "🔍 Debug information:"
+          echo "  - Build output size: $(wc -l < /tmp/full-build.yaml) lines"
+          echo "  - First 50 lines of build output:"
+          head -50 /tmp/full-build.yaml | sed 's/^/    /'
+          echo ""
+          echo "  - Kustomization.yaml structure check:"
+          yq eval '.' kustomization.yaml | head -20 | sed 's/^/    /'
+          exit 1
+        fi
+        
+        echo "✅ Kustomize build successful: $final_count resources generated"
+        
+        # ==========================================
+        # PHASE 5: DEPLOYMENT EXECUTION
+        # ==========================================
+        echo ""
+        echo "🚀 Phase 5: Executing deployment..."
+        
+        # Determine target deployment
         CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
         
         if [[ "$CURRENT_DEPLOYMENT" == "easyshop-blue" ]]; then
           TARGET_DEPLOYMENT="easyshop-green"
-          echo "🔄 Current: Blue, Switching to: Green"
+          echo "🔄 Switching from BLUE to GREEN"
         else
-          TARGET_DEPLOYMENT="easyshop-blue"
-          echo "🔄 Current: Green, Switching to: Blue"
+          TARGET_DEPLOYMENT="easyshop-blue"  
+          echo "🔄 Switching from GREEN to BLUE"
         fi
         
-        # Update image with proper format for kustomize
-        echo "📝 Updating image..."
-        kustomize edit set image gibranf/easyshop=${{ env.IMAGE_WITH_DIGEST }}
-        
-        # Build and apply manifests
-        echo "📦 Building and applying manifests..."
-        kustomize build . | kubectl apply -f -
-        
-        # Wait for new deployment to be ready
-        echo "⏳ Waiting for $TARGET_DEPLOYMENT to be ready..."
-        if ! kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
-          echo "❌ Rollout failed! Debugging..."
-          echo "📦 Pod status:"
-          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
-          echo "📋 Pod descriptions:"
-          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT | head -50
-          echo "📜 Recent logs:"
-          kubectl logs -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT --tail=50 || echo "No logs available"
+        # Apply manifests
+        echo "📦 Applying manifests..."
+        if ! kustomize build . | kubectl apply -f - 2>/tmp/apply-error.log; then
+          echo "❌ KUBECTL APPLY FAILED!"
+          echo "Apply error details:"
+          cat /tmp/apply-error.log
+          echo ""
+          echo "What we tried to apply:"
+          kustomize build . | head -100
           exit 1
         fi
         
-        # Switch traffic to new deployment
-        echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
-        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} -p "{\"spec\": {\"selector\": {\"app\": \"$TARGET_DEPLOYMENT\"}}}"
+        echo "✅ Manifests applied successfully"
         
-        # Scale down old deployment after successful switch
+        # Wait for deployment
+        echo "⏳ Waiting for $TARGET_DEPLOYMENT to be ready..."
+        if ! kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
+          echo "❌ DEPLOYMENT ROLLOUT FAILED!"
+          echo "Pod status:"
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
+          echo "Pod descriptions:"
+          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT | head -100
+          echo "Pod logs:"
+          kubectl logs -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT --tail=100 || echo "No logs available"
+          exit 1
+        fi
+        
+        # Switch service
+        echo "🔀 Switching service to $TARGET_DEPLOYMENT..."
+        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
+          -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
+        
+        # Scale down old deployment
         if [[ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]]; then
           echo "📉 Scaling down old deployment: $CURRENT_DEPLOYMENT"
           kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }}
         fi
         
-        echo "✅ Blue-Green deployment completed!"
+        # Cleanup debug files
+        rm -f kustomization-debug.yaml /tmp/file-test.log /tmp/yaml-check.log /tmp/incremental-test.yaml /tmp/incremental-error.log /tmp/full-build.yaml /tmp/full-error.log /tmp/apply-error.log
+        
+        echo ""
+        echo "✅ BLUE-GREEN DEPLOYMENT COMPLETED SUCCESSFULLY!"
         echo "🎯 Active deployment: $TARGET_DEPLOYMENT"
+        echo "📊 Total resources deployed: $final_count"
 
     - name: 🔍 Verify Deployment
       run: |
