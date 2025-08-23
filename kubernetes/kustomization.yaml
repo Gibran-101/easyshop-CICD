@@ -21,15 +21,15 @@ resources:
 - 12-migration-job.yaml
 - 13-redis-service.yaml
 - 14-redis-deployment.yaml     # Updated with Key Vault secrets + authentication + ConfigMap
-- cert-manager-issuer.yaml     # Let's Encrypt production issuer onlykustomize edit
+- cert-manager-issuer.yaml     # Let's Encrypt production issuer 
 - easyshop-certificate.yaml    # SSL certificates for buildandship.space
 
 # Common labels applied to all resources - FIXED deprecated warning
 commonLabels:
-    app.kubernetes.io/name: easyshop
-    app.kubernetes.io/part-of: easyshop-platform
-    app.kubernetes.io/managed-by: kustomize
-    environment: production
+  app.kubernetes.io/name: easyshop
+  app.kubernetes.io/part-of: easyshop-platform
+  app.kubernetes.io/managed-by: kustomize
+  environment: production
 
 # Common annotations
 commonAnnotations:
