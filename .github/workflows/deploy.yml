@@ -106,6 +106,24 @@ jobs:
         echo "📦 Installing kustomize..."
         curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
         sudo mv kustomize /usr/local/bin/
+#===========================================================================
+    # Simple CRD installation
+    - name: 🔧 Install Missing CRDs
+      run: |
+        echo "📦 Installing CSI Secret Store driver with CRDs..."
+        
+        # Install the complete CSI Secret Store driver (includes CRDs)
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/v1.4.0/deploy/secrets-store-csi-driver.yaml
+        
+        # Wait for everything to be ready
+        sleep 60
+        
+        # Check if SecretProviderClass CRD is now available
+        kubectl get crd secretproviderclasses.secrets-store.csi.k8s.io
+        
+        echo "✅ CRDs installed!"
+#===========================================================================
+
 #*************************************************************************
     # ADD THIS NEW DEBUG STEP HERE - BEFORE THE DEPLOYMENT STEP:
     - name: 🔍 Debug SecretProviderClass Configuration
