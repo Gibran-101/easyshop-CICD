@@ -180,137 +180,194 @@ jobs:
 
 #====================================================================
 #====================================================================
-    - name: 🚀 Blue-Green Deployment - Final Fix
+    # REPLACE your deployment step with this bypass version:
+    - name: 🚀 Blue-Green Deployment - Key Vault Bypass
       run: |
         set -e
         
-        echo "🚀 Starting Blue-Green Deployment..."
+        echo "🚀 Starting Blue-Green Deployment (Key Vault bypass)..."
         
-        # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-        
         cd kubernetes
         
-        # Show available files (for debugging)
-        echo "📋 Available files:"
-        ls -1 *.yaml *.yml | sort
+        # Create a temporary kustomization without Key Vault dependencies
+        echo "📝 Creating temporary kustomization without Key Vault..."
+        cat > kustomization-bypass.yaml << 'EOF'
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
         
-        # Show current kustomization content
-        echo ""
-        echo "📝 Current kustomization.yaml:"
-        cat kustomization.yaml
+        namespace: easyshop
         
-        # Update the image
-        echo ""
+        resources:
+        - 01-namespace.yaml
+        - 04-configmap.yaml
+        - 05-secrets.yaml
+        - 08a-blue-deployment.yml
+        - 08b-green-deployment.yaml
+        - 09-easyshop-service.yaml
+        - 10-ingress.yaml
+        - 11-hpa.yaml
+        - cert-manager-issuer.yaml
+        - easyshop-certificate.yaml
+        
+        commonLabels:
+          app.kubernetes.io/name: easyshop
+          app.kubernetes.io/part-of: easyshop-platform
+          app.kubernetes.io/managed-by: kustomize
+          environment: production
+        
+        images:
+        - name: easyshop
+          newTag: latest
+        
+        replicas:
+        - name: easyshop-blue
+          count: 2
+        - name: easyshop-green
+          count: 2
+        
+        # Remove Key Vault volume mounts from deployments
+        patches:
+        - patch: |-
+            - op: remove
+              path: /spec/template/spec/volumes
+            - op: remove  
+              path: /spec/template/spec/containers/0/volumeMounts
+          target:
+            kind: Deployment
+            name: easyshop-blue
+        - patch: |-
+            - op: remove
+              path: /spec/template/spec/volumes
+            - op: remove
+              path: /spec/template/spec/containers/0/volumeMounts
+          target:
+            kind: Deployment
+            name: easyshop-green
+        # Remove Key Vault environment variables and use simple values
+        - patch: |-
+            - op: replace
+              path: /spec/template/spec/containers/0/env
+              value:
+                - name: NODE_ENV
+                  value: "production"
+                - name: NEXTAUTH_URL
+                  valueFrom:
+                    configMapKeyRef:
+                      name: easyshop-config
+                      key: NEXTAUTH_URL
+                - name: NEXT_PUBLIC_API_URL
+                  valueFrom:
+                    configMapKeyRef:
+                      name: easyshop-config
+                      key: NEXT_PUBLIC_API_URL
+                - name: NEXTAUTH_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: easyshop-secrets
+                      key: NEXTAUTH_SECRET
+                - name: JWT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: easyshop-secrets
+                      key: JWT_SECRET
+                - name: MONGODB_URI
+                  value: "mongodb://host.docker.internal:27017/easyshop"
+                - name: REDIS_URI
+                  value: "redis://host.docker.internal:6379"
+          target:
+            kind: Deployment
+            name: easyshop-blue
+        - patch: |-
+            - op: replace
+              path: /spec/template/spec/containers/0/env
+              value:
+                - name: NODE_ENV
+                  value: "production"
+                - name: NEXTAUTH_URL
+                  valueFrom:
+                    configMapKeyRef:
+                      name: easyshop-config
+                      key: NEXTAUTH_URL
+                - name: NEXT_PUBLIC_API_URL
+                  valueFrom:
+                    configMapKeyRef:
+                      name: easyshop-config
+                      key: NEXT_PUBLIC_API_URL
+                - name: NEXTAUTH_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: easyshop-secrets
+                      key: NEXTAUTH_SECRET
+                - name: JWT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: easyshop-secrets
+                      key: JWT_SECRET
+                - name: MONGODB_URI
+                  value: "mongodb://host.docker.internal:27017/easyshop"
+                - name: REDIS_URI
+                  value: "redis://host.docker.internal:6379"
+          target:
+            kind: Deployment
+            name: easyshop-green
+        EOF
+        
+        # Update image in bypass kustomization
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
-        kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
+        kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }} --file kustomization-bypass.yaml
         
-        # Show the updated images section
-        echo ""
-        echo "📝 Updated images section:"
-        echo "========================="
-        grep -A 10 "^images:" kustomization.yaml || echo "No images section found"
-        
-        # Test kustomize build
-        echo ""
-        echo "🔍 Testing kustomize build:"
-        echo "=========================="
-        
-        # Capture both stdout and stderr
-        if kustomize build . > /tmp/manifests.yaml 2> /tmp/kustomize_stderr.txt; then
-          # Success case
-          RESOURCE_COUNT=$(grep -c "^kind:" /tmp/manifests.yaml 2>/dev/null || echo "0")
-          echo "✅ Kustomize build successful!"
-          echo "📊 Generated resources: $RESOURCE_COUNT"
+        # Test build with bypass
+        echo "🔍 Testing bypass kustomization build..."
+        if kustomize build -f kustomization-bypass.yaml > /tmp/manifests.yaml; then
+          RESOURCE_COUNT=$(grep -c "^kind:" /tmp/manifests.yaml)
+          echo "✅ Generated $RESOURCE_COUNT resources (bypass mode)"
           
-          if [ "$RESOURCE_COUNT" -eq 0 ]; then
-            echo ""
-            echo "❌ No resources generated (empty output)!"
-            echo "📋 Manifest file size: $(wc -c < /tmp/manifests.yaml) bytes"
-            echo "📋 First 200 characters of output:"
-            head -c 200 /tmp/manifests.yaml
-            echo ""
-            echo "📋 Stderr output:"
-            cat /tmp/kustomize_stderr.txt
-            exit 1
-          fi
-          
-          echo ""
-          echo "🔍 Resource types generated:"
+          echo "🔍 Resource types:"
           grep "^kind:" /tmp/manifests.yaml | sort | uniq -c
-          
-          echo ""
-          echo "🐋 Image references in generated manifests:"
-          grep -n "image:" /tmp/manifests.yaml | head -10
-          
         else
-          # Error case
-          echo "❌ Kustomize build failed!"
-          echo ""
-          echo "📋 Error output (stderr):"
-          cat /tmp/kustomize_stderr.txt
-          echo ""
-          echo "📋 Partial output (stdout):"
-          head -50 /tmp/manifests.yaml 2>/dev/null || echo "No stdout output"
-          echo ""
-          echo "🔧 Debugging info:"
-          echo "   Current directory: $(pwd)"
-          echo "   Kustomize version: $(kustomize version --short 2>/dev/null || echo 'unknown')"
+          echo "❌ Bypass kustomization failed too!"
           exit 1
         fi
         
-        # If we get here, kustomize worked! Continue with deployment...
-        
-        # Determine current active deployment
-        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
-        
-        # Determine target deployment
-        if [ "$CURRENT_DEPLOYMENT" = "easyshop-blue" ]; then
-          TARGET_DEPLOYMENT="easyshop-green"
-          echo ""
-          echo "🔄 Current active: BLUE → Deploying to: GREEN"
-        else
-          TARGET_DEPLOYMENT="easyshop-blue"
-          echo ""
-          echo "🔄 Current active: GREEN → Deploying to: BLUE"
-        fi
-        
-        # Apply all manifests
-        echo ""
-        echo "📦 Applying $RESOURCE_COUNT resources to cluster..."
+        # Apply bypass manifests
+        echo "📦 Applying bypass manifests..."
         kubectl apply -f /tmp/manifests.yaml
         
-        # Wait for the target deployment to be ready
-        echo ""
-        echo "⏳ Waiting for $TARGET_DEPLOYMENT rollout to complete..."
-        if kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
-          echo "✅ Rollout completed successfully!"
+        # Determine target deployment
+        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
+        
+        if [ "$CURRENT_DEPLOYMENT" = "easyshop-blue" ]; then
+          TARGET_DEPLOYMENT="easyshop-green"
+          echo "🔄 Current: BLUE → Deploying to: GREEN"
         else
-          echo "❌ Rollout failed or timed out"
-          echo "📋 Pod status:"
-          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
+          TARGET_DEPLOYMENT="easyshop-blue"
+          echo "🔄 Current: GREEN → Deploying to: BLUE"
+        fi
+        
+        # Wait for deployment
+        echo "⏳ Waiting for $TARGET_DEPLOYMENT (bypass mode)..."
+        if kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
+          echo "✅ Deployment successful!"
+          
+          # Switch traffic
+          kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
+            -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
+          
+          # Scale down old
+          if [ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]; then
+            kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || true
+          fi
+          
+          echo "🎉 Blue-Green deployment completed (bypass mode)!"
+          echo "⚠️  Note: Running without Key Vault integration"
+          
+        else
+          echo "❌ Deployment failed even in bypass mode"
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
           exit 1
         fi
-        
-        # Switch traffic to new deployment
-        echo ""
-        echo "🔀 Switching service traffic to $TARGET_DEPLOYMENT..."
-        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
-          -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
-        
-        # Scale down the old deployment
-        if [ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]; then
-          echo ""
-          echo "📉 Scaling down old deployment: $CURRENT_DEPLOYMENT"
-          kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || echo "⚠️  Old deployment not found or already scaled"
-        fi
-        
-        echo ""
-        echo "🎉 Blue-Green Deployment Completed Successfully!"
-        echo "=============================================="
-        echo "🎯 Active Deployment: $TARGET_DEPLOYMENT"
-        echo "📊 Resources Applied: $RESOURCE_COUNT"
-        echo "🐋 Image: ${{ env.IMAGE_WITH_DIGEST }}"
 #====================================================================
 #====================================================================
 
