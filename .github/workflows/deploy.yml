@@ -162,50 +162,52 @@ jobs:
 #*************************************************************************
 
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    - name: 🔧 Fix CSI Driver Name References
+    - name: 🔧 Fix CSI Driver Name (Selective Fix)
       run: |
-        echo "🔧 Fixing CSI driver name references..."
+        echo "🔧 Fixing CSI driver name references (selective)..."
         cd kubernetes
+      
+        # Show current state
+        echo "📋 Current CSI driver references:"
+        grep -rn "secrets-store.csi" . || echo "No references found"
         
-        # Check what driver name is being used in deployment files
-        echo "📋 Current CSI driver references in files:"
-        grep -r "secrets-store.csi" . || echo "No CSI driver references found"
+        echo ""
+        echo "🔧 Applying selective fixes..."
         
-        # Fix the driver name in deployment files
-        echo "🔧 Updating CSI driver name from secrets-store.csi.x-k8s.io to secrets-store.csi.k8s.io..."
+        # Fix ONLY the driver name in volume mounts, NOT the apiVersion in SecretProviderClass
+        # Update driver in deployment volume mounts
+        sed -i 's/driver: secrets-store\.csi\.x-k8s\.io/driver: secrets-store.csi.k8s.io/g' *.yaml *.yml || true
         
-        # Update in deployment files
-        sed -i 's/secrets-store\.csi\.x-k8s\.io/secrets-store.csi.k8s.io/g' *.yaml *.yml || true
-        
-        # Update in SecretProviderClass if it exists
+        # IMPORTANT: Revert the apiVersion in SecretProviderClass back to x-k8s.io
         if [[ -f "15-keyvault-secret-provider.yaml" ]]; then
-          echo "📝 Updating SecretProviderClass CSI driver name..."
-          sed -i 's/secrets-store\.csi\.x-k8s\.io/secrets-store.csi.k8s.io/g' 15-keyvault-secret-provider.yaml
+          echo "🔄 Reverting SecretProviderClass apiVersion to match installed CRDs..."
+          sed -i 's/apiVersion: secrets-store\.csi\.k8s\.io\/v1/apiVersion: secrets-store.csi.x-k8s.io\/v1/g' 15-keyvault-secret-provider.yaml
         fi
         
-        # Verify the changes
-        echo "✅ Updated CSI driver references:"
-        grep -r "secrets-store.csi" . || echo "No CSI driver references found after update"
+        echo ""
+        echo "✅ After selective fix:"
+        echo "📋 SecretProviderClass apiVersion (should be x-k8s.io):"
+        grep "apiVersion:" 15-keyvault-secret-provider.yaml || echo "File not found"
         
-        # Rebuild manifests with corrected driver names
-        echo "🔍 Rebuilding manifests with correct CSI driver name..."
+        echo "📋 Volume driver names (should be k8s.io):"
+        grep -n "driver: secrets-store" *.yaml *.yml || echo "No driver references found"
+        
+        # Rebuild manifests with selective fixes
+        echo ""
+        echo "🔍 Rebuilding manifests with selective fixes..."
         kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
-        kustomize build . > /tmp/manifests-fixed.yaml
+        kustomize build . > /tmp/manifests-selective.yaml
         
-        # Verify the CSI driver name in generated manifests
-        echo "📋 CSI driver name in generated manifests:"
-        grep -A 5 -B 5 "secrets-store.csi" /tmp/manifests-fixed.yaml || echo "No CSI driver references in manifests"
+        # Verify the API versions in manifests
+        echo "📋 Checking API versions in generated manifests:"
+        grep -A 2 -B 2 "kind: SecretProviderClass" /tmp/manifests-selective.yaml || echo "No SecretProviderClass found"
         
-        # Apply the corrected manifests
-        echo "📦 Applying corrected manifests..."
-        kubectl apply -f /tmp/manifests-fixed.yaml
+        # Apply the selectively fixed manifests
+        echo ""
+        echo "📦 Applying selectively fixed manifests..."
+        kubectl apply -f /tmp/manifests-selective.yaml
         
-        # Clean up pods with wrong CSI driver references
-        echo "🧹 Cleaning up pods with incorrect CSI driver references..."
-        kubectl delete pods -n easyshop -l app=easyshop-blue --force --grace-period=0 || true
-        kubectl delete pods -n easyshop -l app=easyshop-green --force --grace-period=0 || true
-        
-        echo "✅ CSI driver name fix completed!"
+        echo "✅ Selective CSI driver fix completed!"
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 #====================================================================
