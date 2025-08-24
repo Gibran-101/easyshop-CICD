@@ -139,51 +139,50 @@ jobs:
 #*************************************************************************
 
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    - name: 🔧 CSI Driver Check and Fix
+    - name: 🔧 Fix CSI Driver Name References
       run: |
-        echo "🔧 Checking CSI Secret Store driver..."
+        echo "🔧 Fixing CSI driver name references..."
+        cd kubernetes
         
-        # Check current CSI drivers
-        echo "📋 Current CSI drivers:"
-        kubectl get csidrivers
+        # Check what driver name is being used in deployment files
+        echo "📋 Current CSI driver references in files:"
+        grep -r "secrets-store.csi" . || echo "No CSI driver references found"
         
-        # The CSI driver should exist as "secrets-store.csi.k8s.io"
-        echo ""
-        echo "🔍 Verifying CSI driver registration..."
-        if kubectl get csidriver secrets-store.csi.k8s.io; then
-          echo "✅ CSI driver is registered correctly!"
-          
-          # Check CSI driver pods
-          echo ""
-          echo "📋 CSI driver pods:"
-          kubectl get pods -n kube-system | grep csi
-          
-          echo ""
-          echo "🧹 Cleaning up any stuck pods from previous attempts..."
-          kubectl delete pods -n easyshop --field-selector=status.phase=Pending --force --grace-period=0 || true
-          kubectl delete pods -n easyshop --field-selector=status.phase=ContainerCreating --force --grace-period=0 || true
-          
-          echo "✅ CSI driver verification completed successfully!"
-          
-        else
-          echo "❌ CSI driver not registered"
-          echo "📋 Available CSI drivers:"
-          kubectl get csidrivers
-          
-          echo ""
-          echo "🔧 Installing base CSI Secret Store driver..."
-          kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/v1.4.0/deploy/secrets-store-csi-driver.yaml
-          
-          echo "⏳ Waiting for CSI driver registration..."
-          sleep 60
-          
-          if kubectl get csidriver secrets-store.csi.k8s.io; then
-            echo "✅ CSI driver now registered!"
-          else
-            echo "❌ CSI driver registration failed"
-            exit 1
-          fi
+        # Fix the driver name in deployment files
+        echo "🔧 Updating CSI driver name from secrets-store.csi.x-k8s.io to secrets-store.csi.k8s.io..."
+        
+        # Update in deployment files
+        sed -i 's/secrets-store\.csi\.x-k8s\.io/secrets-store.csi.k8s.io/g' *.yaml *.yml || true
+        
+        # Update in SecretProviderClass if it exists
+        if [[ -f "15-keyvault-secret-provider.yaml" ]]; then
+          echo "📝 Updating SecretProviderClass CSI driver name..."
+          sed -i 's/secrets-store\.csi\.x-k8s\.io/secrets-store.csi.k8s.io/g' 15-keyvault-secret-provider.yaml
         fi
+        
+        # Verify the changes
+        echo "✅ Updated CSI driver references:"
+        grep -r "secrets-store.csi" . || echo "No CSI driver references found after update"
+        
+        # Rebuild manifests with corrected driver names
+        echo "🔍 Rebuilding manifests with correct CSI driver name..."
+        kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
+        kustomize build . > /tmp/manifests-fixed.yaml
+        
+        # Verify the CSI driver name in generated manifests
+        echo "📋 CSI driver name in generated manifests:"
+        grep -A 5 -B 5 "secrets-store.csi" /tmp/manifests-fixed.yaml || echo "No CSI driver references in manifests"
+        
+        # Apply the corrected manifests
+        echo "📦 Applying corrected manifests..."
+        kubectl apply -f /tmp/manifests-fixed.yaml
+        
+        # Clean up pods with wrong CSI driver references
+        echo "🧹 Cleaning up pods with incorrect CSI driver references..."
+        kubectl delete pods -n easyshop -l app=easyshop-blue --force --grace-period=0 || true
+        kubectl delete pods -n easyshop -l app=easyshop-green --force --grace-period=0 || true
+        
+        echo "✅ CSI driver name fix completed!"
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 #====================================================================
