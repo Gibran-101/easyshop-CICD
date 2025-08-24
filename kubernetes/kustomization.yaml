@@ -4,30 +4,60 @@ kind: Kustomization
 # Namespace for all resources
 namespace: easyshop
 
-# Start with essential resources only
+# Resources to deploy
 resources:
 - 01-namespace.yaml
-- 04-configmap.yaml  
+- 04-configmap.yaml
 - 05-secrets.yaml
+- 15-keyvault-secret-provider.yaml
+- 06-mongodb-service.yaml
+- 07-mongodb-statefulset.yaml
 - 08a-blue-deployment.yml
 - 08b-green-deployment.yaml
 - 09-easyshop-service.yaml
+- 10-ingress.yaml
+- 11-hpa.yaml
+- 12-migration-job.yaml
+- 13-redis-service.yaml
+- 14-redis-deployment.yaml
+- cert-manager-issuer.yaml
+- easyshop-certificate.yaml
 
-# Use 'labels' instead of deprecated 'commonLabels'
+# FIXED: Use 'labels' instead of deprecated 'commonLabels'
 labels:
 - pairs:
     app.kubernetes.io/name: easyshop
+    app.kubernetes.io/part-of: easyshop-platform
     app.kubernetes.io/managed-by: kustomize
     environment: production
+
+# Common annotations
+commonAnnotations:
+  config.kubernetes.io/local-config: "true"
 
 # Images to update
 images:
 - name: easyshop
   newTag: latest
 
-# Simple replica overrides
+# Resource transformations
+patches:
+# Patch to use Azure storage class for MongoDB
+- patch: |-
+    - op: replace
+      path: /spec/volumeClaimTemplates/0/spec/storageClassName
+      value: managed-csi
+  target:
+    kind: StatefulSet
+    name: mongodb
+
+# Replica count overrides for production
 replicas:
 - name: easyshop-blue
   count: 2
 - name: easyshop-green
   count: 2
+- name: mongodb
+  count: 1
+- name: redis
+  count: 1
