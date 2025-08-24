@@ -108,7 +108,7 @@ jobs:
         sudo mv kustomize /usr/local/bin/
 #====================================================================
 #====================================================================
-    - name: 🚀 Blue-Green Deployment with Enhanced Debugging
+    - name: 🚀 Blue-Green Deployment - Final Fix
       run: |
         set -e
         
@@ -119,116 +119,126 @@ jobs:
         
         cd kubernetes
         
-        # STEP 1: Check all files exist
-        echo "📋 Checking if all resource files exist:"
-        echo "======================================"
-        MISSING_FILES=0
-        while IFS= read -r file; do
-          if [[ "$file" =~ ^-[[:space:]]*(.+)$ ]]; then
-            filename="${BASH_REMATCH[1]}"
-            if [[ -f "$filename" ]]; then
-              echo "✅ $filename"
-            else
-              echo "❌ MISSING: $filename"
-              MISSING_FILES=$((MISSING_FILES + 1))
-            fi
-          fi
-        done < <(grep "^- " kustomization.yaml)
+        # Show available files (for debugging)
+        echo "📋 Available files:"
+        ls -1 *.yaml *.yml | sort
         
-        if [ "$MISSING_FILES" -gt 0 ]; then
-          echo ""
-          echo "❌ Found $MISSING_FILES missing files. Listing all files in directory:"
-          ls -la
-          echo ""
-          echo "🔧 You need to either:"
-          echo "   1. Create the missing files, or"
-          echo "   2. Remove them from kustomization.yaml resources list"
-          exit 1
-        fi
-        
-        # STEP 2: Validate each YAML file individually
-        echo ""
-        echo "🔍 Validating individual YAML files:"
-        echo "====================================="
-        while IFS= read -r file; do
-          if [[ "$file" =~ ^-[[:space:]]*(.+)$ ]]; then
-            filename="${BASH_REMATCH[1]}"
-            echo -n "Checking $filename... "
-            if kubectl --dry-run=client apply -f "$filename" > /dev/null 2>&1; then
-              echo "✅ Valid"
-            else
-              echo "❌ Invalid YAML"
-              echo "Error details:"
-              kubectl --dry-run=client apply -f "$filename" 2>&1 | head -5
-            fi
-          fi
-        done < <(grep "^- " kustomization.yaml)
-        
-        # STEP 3: Show current and update image
+        # Show current kustomization content
         echo ""
         echo "📝 Current kustomization.yaml:"
         cat kustomization.yaml
         
+        # Update the image
         echo ""
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
         kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
+        # Show the updated images section
         echo ""
-        echo "📝 Updated kustomization.yaml:"
-        cat kustomization.yaml
+        echo "📝 Updated images section:"
+        echo "========================="
+        grep -A 10 "^images:" kustomization.yaml || echo "No images section found"
         
-        # STEP 4: Test kustomize build with full error output
+        # Test kustomize build
         echo ""
-        echo "🔍 Testing kustomize build with full error output:"
-        echo "================================================="
+        echo "🔍 Testing kustomize build:"
+        echo "=========================="
         
-        # Try kustomize build and capture both stdout and stderr
-        if kustomize build . > /tmp/manifests.yaml 2> /tmp/kustomize_errors.txt; then
-          echo "✅ Kustomize build succeeded"
+        # Capture both stdout and stderr
+        if kustomize build . > /tmp/manifests.yaml 2> /tmp/kustomize_stderr.txt; then
+          # Success case
+          RESOURCE_COUNT=$(grep -c "^kind:" /tmp/manifests.yaml 2>/dev/null || echo "0")
+          echo "✅ Kustomize build successful!"
+          echo "📊 Generated resources: $RESOURCE_COUNT"
+          
+          if [ "$RESOURCE_COUNT" -eq 0 ]; then
+            echo ""
+            echo "❌ No resources generated (empty output)!"
+            echo "📋 Manifest file size: $(wc -c < /tmp/manifests.yaml) bytes"
+            echo "📋 First 200 characters of output:"
+            head -c 200 /tmp/manifests.yaml
+            echo ""
+            echo "📋 Stderr output:"
+            cat /tmp/kustomize_stderr.txt
+            exit 1
+          fi
+          
+          echo ""
+          echo "🔍 Resource types generated:"
+          grep "^kind:" /tmp/manifests.yaml | sort | uniq -c
+          
+          echo ""
+          echo "🐋 Image references in generated manifests:"
+          grep -n "image:" /tmp/manifests.yaml | head -10
+          
         else
+          # Error case
           echo "❌ Kustomize build failed!"
           echo ""
-          echo "📋 Error output:"
-          cat /tmp/kustomize_errors.txt
+          echo "📋 Error output (stderr):"
+          cat /tmp/kustomize_stderr.txt
           echo ""
-          echo "📋 Partial output:"
-          cat /tmp/manifests.yaml
+          echo "📋 Partial output (stdout):"
+          head -50 /tmp/manifests.yaml 2>/dev/null || echo "No stdout output"
           echo ""
-          echo "🔧 Common fixes:"
-          echo "   1. Check YAML syntax in all files"
-          echo "   2. Ensure all referenced files exist"
-          echo "   3. Check for duplicate resource names"
-          echo "   4. Verify namespace consistency"
+          echo "🔧 Debugging info:"
+          echo "   Current directory: $(pwd)"
+          echo "   Kustomize version: $(kustomize version --short 2>/dev/null || echo 'unknown')"
           exit 1
         fi
         
-        # STEP 5: Analyze generated resources
-        RESOURCE_COUNT=$(cat /tmp/manifests.yaml | grep "^kind:" | wc -l)
-        echo "📊 Generated: $RESOURCE_COUNT resources"
+        # If we get here, kustomize worked! Continue with deployment...
         
-        if [ "$RESOURCE_COUNT" -eq 0 ]; then
-          echo "❌ No resources generated despite successful build!"
-          echo "📋 Manifest content:"
-          cat /tmp/manifests.yaml
+        # Determine current active deployment
+        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
+        
+        # Determine target deployment
+        if [ "$CURRENT_DEPLOYMENT" = "easyshop-blue" ]; then
+          TARGET_DEPLOYMENT="easyshop-green"
           echo ""
-          echo "📋 Kustomization debug:"
-          kustomize build . --enable-alpha-plugins 2>&1
+          echo "🔄 Current active: BLUE → Deploying to: GREEN"
+        else
+          TARGET_DEPLOYMENT="easyshop-blue"
+          echo ""
+          echo "🔄 Current active: GREEN → Deploying to: BLUE"
+        fi
+        
+        # Apply all manifests
+        echo ""
+        echo "📦 Applying $RESOURCE_COUNT resources to cluster..."
+        kubectl apply -f /tmp/manifests.yaml
+        
+        # Wait for the target deployment to be ready
+        echo ""
+        echo "⏳ Waiting for $TARGET_DEPLOYMENT rollout to complete..."
+        if kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
+          echo "✅ Rollout completed successfully!"
+        else
+          echo "❌ Rollout failed or timed out"
+          echo "📋 Pod status:"
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
           exit 1
         fi
         
-        # Show what we're deploying
+        # Switch traffic to new deployment
         echo ""
-        echo "🔍 Resources to deploy:"
-        grep "^kind:" /tmp/manifests.yaml | sort | uniq -c
+        echo "🔀 Switching service traffic to $TARGET_DEPLOYMENT..."
+        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
+          -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
         
-        # Show image references in generated manifests
-        echo ""
-        echo "🐋 Image references in manifests:"
-        grep -A 2 -B 1 "image:" /tmp/manifests.yaml | head -20
+        # Scale down the old deployment
+        if [ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]; then
+          echo ""
+          echo "📉 Scaling down old deployment: $CURRENT_DEPLOYMENT"
+          kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || echo "⚠️  Old deployment not found or already scaled"
+        fi
         
-        # Continue with deployment logic...
         echo ""
-        echo "✅ All checks passed, proceeding with deployment..."
+        echo "🎉 Blue-Green Deployment Completed Successfully!"
+        echo "=============================================="
+        echo "🎯 Active Deployment: $TARGET_DEPLOYMENT"
+        echo "📊 Resources Applied: $RESOURCE_COUNT"
+        echo "🐋 Image: ${{ env.IMAGE_WITH_DIGEST }}"
 #====================================================================
 #====================================================================
 
