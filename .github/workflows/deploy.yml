@@ -123,15 +123,38 @@ jobs:
         echo "📝 Current kustomization.yaml:"
         cat kustomization.yaml
         
-        # Update image
+        # FIXED: Update image with the correct name that matches deployment files
         echo ""
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
-        kustomize edit set image gibranf/easyshop=${{ env.IMAGE_WITH_DIGEST }}
+        kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
+        
+        # Show updated kustomization
+        echo ""
+        echo "📝 Updated kustomization.yaml:"
+        cat kustomization.yaml
         
         # Test kustomize build
         echo ""
         echo "🔍 Testing kustomize build..."
-        kustomize build . > /tmp/manifests.yaml
+        if ! kustomize build . > /tmp/manifests.yaml; then
+          echo "❌ Kustomize build failed!"
+          echo "📋 Debugging information:"
+          echo "Current directory contents:"
+          ls -la
+          echo ""
+          echo "Checking for missing resource files:"
+          grep "^- " kustomization.yaml | sed 's/^- //' | while read file; do
+            if [[ -f "$file" ]]; then
+              echo "✅ Found: $file"
+            else
+              echo "❌ Missing: $file"
+            fi
+          done
+          echo ""
+          echo "Trying kustomize build with verbose output:"
+          kustomize build . --load-restrictor LoadRestrictionsNone || true
+          exit 1
+        fi
         
         # Simple resource count
         RESOURCE_COUNT=$(cat /tmp/manifests.yaml | grep "^kind:" | wc -l)
@@ -141,6 +164,11 @@ jobs:
         echo ""
         echo "🔍 Resources to deploy:"
         grep "^kind:" /tmp/manifests.yaml | sort | uniq -c
+        
+        # Show image references in generated manifests
+        echo ""
+        echo "🐋 Image references in manifests:"
+        grep -A 2 "image:" /tmp/manifests.yaml || echo "No image references found"
         
         if [ "$RESOURCE_COUNT" -eq 0 ]; then
           echo "❌ No resources generated!"
@@ -168,7 +196,18 @@ jobs:
         # Wait for deployment
         echo ""
         echo "⏳ Waiting for $TARGET_DEPLOYMENT..."
-        kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s
+        if ! kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
+          echo "❌ Deployment rollout failed!"
+          echo "📋 Pod status:"
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
+          echo ""
+          echo "📋 Pod descriptions:"
+          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
+          echo ""
+          echo "📋 Deployment events:"
+          kubectl describe deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }}
+          exit 1
+        fi
         
         # Switch traffic
         echo ""
@@ -179,7 +218,7 @@ jobs:
         # Scale down old deployment
         if [ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]; then
           echo "📉 Scaling down $CURRENT_DEPLOYMENT..."
-          kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }}
+          kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || echo "⚠️ Old deployment not found"
         fi
         
         echo ""

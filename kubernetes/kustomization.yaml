@@ -6,25 +6,24 @@ namespace: easyshop
 
 # Resources to deploy
 resources:
-- 00-priority-class.yaml
 - 01-namespace.yaml
 - 04-configmap.yaml
 - 05-secrets.yaml
-- 15-keyvault-secret-provider.yaml  # Azure Key Vault integration
+- 15-keyvault-secret-provider.yaml
 - 06-mongodb-service.yaml
-- 07-mongodb-statefulset.yaml  # Uses managed-csi (no need for 02-mongodb-pv.yaml)
-- 08a-blue-deployment.yml      # ✅ BLUE deployment (initially active)
-- 08b-green-deployment.yaml    # ✅ GREEN deployment (initially inactive)
-- 09-easyshop-service.yaml     # Service that switches between blue/green
-- 10-ingress.yaml              # Updated for AKS with buildandship.space domain
+- 07-mongodb-statefulset.yaml
+- 08a-blue-deployment.yml      # Make sure this matches your actual file name
+- 08b-green-deployment.yaml    # Make sure this matches your actual file name
+- 09-easyshop-service.yaml
+- 10-ingress.yaml
 - 11-hpa.yaml
 - 12-migration-job.yaml
 - 13-redis-service.yaml
-- 14-redis-deployment.yaml     # Updated with Key Vault secrets + authentication + ConfigMap
-- cert-manager-issuer.yaml     # Let's Encrypt production issuer 
-- easyshop-certificate.yaml    # SSL certificates for buildandship.space
+- 14-redis-deployment.yaml
+- cert-manager-issuer.yaml
+- easyshop-certificate.yaml
 
-# Common labels applied to all resources - FIXED deprecated warning
+# Common labels applied to all resources
 commonLabels:
   app.kubernetes.io/name: easyshop
   app.kubernetes.io/part-of: easyshop-platform
@@ -35,9 +34,9 @@ commonLabels:
 commonAnnotations:
   config.kubernetes.io/local-config: "true"
 
-# Images to update (semantic versioning for better tracking)
+# FIXED: Match the actual image name in your deployment files
 images:
-- name: gibranf/easyshop
+- name: easyshop  # This now matches what's in your deployment YAML files
   newTag: latest
 
 # Resource transformations
@@ -53,9 +52,9 @@ patches:
 
 # Replica count overrides for production
 replicas:
-- name: easyshop-blue    # Blue deployment replicas
+- name: easyshop-blue
   count: 2
-- name: easyshop-green   # Green deployment replicas  
+- name: easyshop-green
   count: 2
 - name: mongodb
   count: 1
