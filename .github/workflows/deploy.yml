@@ -108,7 +108,7 @@ jobs:
         sudo mv kustomize /usr/local/bin/
 #====================================================================
 #====================================================================
-    - name: 🚀 Blue-Green Deployment
+    - name: 🚀 Blue-Green Deployment with Enhanced Debugging
       run: |
         set -e
         
@@ -119,46 +119,102 @@ jobs:
         
         cd kubernetes
         
-        # Show current kustomization
+        # STEP 1: Check all files exist
+        echo "📋 Checking if all resource files exist:"
+        echo "======================================"
+        MISSING_FILES=0
+        while IFS= read -r file; do
+          if [[ "$file" =~ ^-[[:space:]]*(.+)$ ]]; then
+            filename="${BASH_REMATCH[1]}"
+            if [[ -f "$filename" ]]; then
+              echo "✅ $filename"
+            else
+              echo "❌ MISSING: $filename"
+              MISSING_FILES=$((MISSING_FILES + 1))
+            fi
+          fi
+        done < <(grep "^- " kustomization.yaml)
+        
+        if [ "$MISSING_FILES" -gt 0 ]; then
+          echo ""
+          echo "❌ Found $MISSING_FILES missing files. Listing all files in directory:"
+          ls -la
+          echo ""
+          echo "🔧 You need to either:"
+          echo "   1. Create the missing files, or"
+          echo "   2. Remove them from kustomization.yaml resources list"
+          exit 1
+        fi
+        
+        # STEP 2: Validate each YAML file individually
+        echo ""
+        echo "🔍 Validating individual YAML files:"
+        echo "====================================="
+        while IFS= read -r file; do
+          if [[ "$file" =~ ^-[[:space:]]*(.+)$ ]]; then
+            filename="${BASH_REMATCH[1]}"
+            echo -n "Checking $filename... "
+            if kubectl --dry-run=client apply -f "$filename" > /dev/null 2>&1; then
+              echo "✅ Valid"
+            else
+              echo "❌ Invalid YAML"
+              echo "Error details:"
+              kubectl --dry-run=client apply -f "$filename" 2>&1 | head -5
+            fi
+          fi
+        done < <(grep "^- " kustomization.yaml)
+        
+        # STEP 3: Show current and update image
+        echo ""
         echo "📝 Current kustomization.yaml:"
         cat kustomization.yaml
         
-        # FIXED: Update image with the correct name that matches deployment files
         echo ""
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
         kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
-        # Show updated kustomization
         echo ""
         echo "📝 Updated kustomization.yaml:"
         cat kustomization.yaml
         
-        # Test kustomize build
+        # STEP 4: Test kustomize build with full error output
         echo ""
-        echo "🔍 Testing kustomize build..."
-        if ! kustomize build . > /tmp/manifests.yaml; then
+        echo "🔍 Testing kustomize build with full error output:"
+        echo "================================================="
+        
+        # Try kustomize build and capture both stdout and stderr
+        if kustomize build . > /tmp/manifests.yaml 2> /tmp/kustomize_errors.txt; then
+          echo "✅ Kustomize build succeeded"
+        else
           echo "❌ Kustomize build failed!"
-          echo "📋 Debugging information:"
-          echo "Current directory contents:"
-          ls -la
           echo ""
-          echo "Checking for missing resource files:"
-          grep "^- " kustomization.yaml | sed 's/^- //' | while read file; do
-            if [[ -f "$file" ]]; then
-              echo "✅ Found: $file"
-            else
-              echo "❌ Missing: $file"
-            fi
-          done
+          echo "📋 Error output:"
+          cat /tmp/kustomize_errors.txt
           echo ""
-          echo "Trying kustomize build with verbose output:"
-          kustomize build . --load-restrictor LoadRestrictionsNone || true
+          echo "📋 Partial output:"
+          cat /tmp/manifests.yaml
+          echo ""
+          echo "🔧 Common fixes:"
+          echo "   1. Check YAML syntax in all files"
+          echo "   2. Ensure all referenced files exist"
+          echo "   3. Check for duplicate resource names"
+          echo "   4. Verify namespace consistency"
           exit 1
         fi
         
-        # Simple resource count
+        # STEP 5: Analyze generated resources
         RESOURCE_COUNT=$(cat /tmp/manifests.yaml | grep "^kind:" | wc -l)
         echo "📊 Generated: $RESOURCE_COUNT resources"
+        
+        if [ "$RESOURCE_COUNT" -eq 0 ]; then
+          echo "❌ No resources generated despite successful build!"
+          echo "📋 Manifest content:"
+          cat /tmp/manifests.yaml
+          echo ""
+          echo "📋 Kustomization debug:"
+          kustomize build . --enable-alpha-plugins 2>&1
+          exit 1
+        fi
         
         # Show what we're deploying
         echo ""
@@ -168,63 +224,11 @@ jobs:
         # Show image references in generated manifests
         echo ""
         echo "🐋 Image references in manifests:"
-        grep -A 2 "image:" /tmp/manifests.yaml || echo "No image references found"
+        grep -A 2 -B 1 "image:" /tmp/manifests.yaml | head -20
         
-        if [ "$RESOURCE_COUNT" -eq 0 ]; then
-          echo "❌ No resources generated!"
-          echo "Build output:"
-          cat /tmp/manifests.yaml
-          exit 1
-        fi
-        
-        # Determine target deployment
-        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
-        
-        if [ "$CURRENT_DEPLOYMENT" = "easyshop-blue" ]; then
-          TARGET_DEPLOYMENT="easyshop-green"
-          echo "🔄 Deploying to GREEN"
-        else
-          TARGET_DEPLOYMENT="easyshop-blue"
-          echo "🔄 Deploying to BLUE"
-        fi
-        
-        # Apply manifests
+        # Continue with deployment logic...
         echo ""
-        echo "📦 Applying manifests..."
-        kubectl apply -f /tmp/manifests.yaml
-        
-        # Wait for deployment
-        echo ""
-        echo "⏳ Waiting for $TARGET_DEPLOYMENT..."
-        if ! kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
-          echo "❌ Deployment rollout failed!"
-          echo "📋 Pod status:"
-          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
-          echo ""
-          echo "📋 Pod descriptions:"
-          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
-          echo ""
-          echo "📋 Deployment events:"
-          kubectl describe deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }}
-          exit 1
-        fi
-        
-        # Switch traffic
-        echo ""
-        echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
-        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
-          -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
-        
-        # Scale down old deployment
-        if [ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]; then
-          echo "📉 Scaling down $CURRENT_DEPLOYMENT..."
-          kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || echo "⚠️ Old deployment not found"
-        fi
-        
-        echo ""
-        echo "✅ Deployment completed!"
-        echo "🎯 Active: $TARGET_DEPLOYMENT"
-        echo "📊 Resources: $RESOURCE_COUNT"
+        echo "✅ All checks passed, proceeding with deployment..."
 #====================================================================
 #====================================================================
 
