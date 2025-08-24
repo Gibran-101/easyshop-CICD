@@ -6,8 +6,50 @@ namespace: easyshop
 resources:
 - 01-namespace.yaml
 - 04-configmap.yaml
+- 05-secrets.yaml
+- 08a-blue-deployment.yml       # CRITICAL: Blue deployment
+- 08b-green-deployment.yaml     # CRITICAL: Green deployment  
+- 09-easyshop-service.yaml      # CRITICAL: Service for traffic switching
+- 15-keyvault-secret-provider.yaml
+- 06-mongodb-service.yaml
+- 07-mongodb-statefulset.yaml
+- 10-ingress.yaml
+- 11-hpa.yaml
+- 12-migration-job.yaml
+- 13-redis-service.yaml
+- 14-redis-deployment.yaml
+- cert-manager-issuer.yaml
+- easyshop-certificate.yaml
 
+# Keep original commonLabels (ignore deprecation warning)
+commonLabels:
+  app.kubernetes.io/name: easyshop
+  app.kubernetes.io/part-of: easyshop-platform
+  app.kubernetes.io/managed-by: kustomize
+  environment: production
+
+# Images to update
 images:
 - name: easyshop
   newTag: latest
-  
+
+# Resource transformations
+patches:
+- patch: |-
+    - op: replace
+      path: /spec/volumeClaimTemplates/0/spec/storageClassName
+      value: managed-csi
+  target:
+    kind: StatefulSet
+    name: mongodb
+
+# Replica overrides
+replicas:
+- name: easyshop-blue
+  count: 2
+- name: easyshop-green
+  count: 2
+- name: mongodb
+  count: 1
+- name: redis
+  count: 1
