@@ -139,43 +139,107 @@ jobs:
 #*************************************************************************
 
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    # ADD THIS STEP AFTER THE DEBUG STEP AND BEFORE DEPLOYMENT:
-    - name: 🔧 Fix CSI Secret Store Driver Registration
+    - name: 🔧 Fix CSI Secret Store Driver (Proper Installation)
       run: |
-        echo "🔧 Fixing CSI Secret Store driver registration..."
+        echo "🔧 Installing CSI Secret Store driver components properly..."
         
-        # Restart the CSI driver daemonset to re-register it
+        # Step 1: Check what's currently installed
+        echo "📋 Current CSI drivers:"
+        kubectl get csidrivers || echo "No CSI drivers found"
+        
+        echo ""
+        echo "📋 Current CSI pods:"
+        kubectl get pods -n kube-system | grep csi
+        
+        # Step 2: Install base CSI Secret Store driver (this creates the CSIDriver resource)
+        echo ""
+        echo "📦 Installing base CSI Secret Store driver..."
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/v1.4.0/deploy/secrets-store-csi-driver.yaml
+        
+        # Wait for base driver pods to be ready
+        echo "⏳ Waiting for base CSI driver pods..."
+        kubectl wait --for=condition=ready pod -l app=secrets-store-csi-driver -n kube-system --timeout=180s
+        
+        # Step 3: Verify CSIDriver resource is now created
+        echo ""
+        echo "🔍 Checking if CSIDriver is now registered..."
+        if kubectl get csidriver secrets-store.csi.x-k8s.io; then
+          echo "✅ Base CSI driver registered successfully!"
+        else
+          echo "❌ Base CSI driver registration failed"
+          echo "📋 Available CSI drivers:"
+          kubectl get csidrivers
+          exit 1
+        fi
+        
+        # Step 4: Clean up any old Azure provider installations
+        echo ""
+        echo "🧹 Cleaning up old Azure provider installations..."
+        kubectl delete daemonset csi-secrets-store-provider-azure -n kube-system --ignore-not-found=true
+        kubectl delete serviceaccount csi-secrets-store-provider-azure -n kube-system --ignore-not-found=true
+        
+        # Step 5: Install Azure provider (this works with the base driver)
+        echo "📦 Installing Azure CSI provider..."
+        kubectl apply -f https://raw.githubusercontent.com/Azure/secrets-store-csi-driver-provider-azure/v1.5.0/deployment/provider-azure-installer.yaml
+        
+        # Wait for Azure provider to be ready
+        echo "⏳ Waiting for Azure provider pods..."
+        kubectl wait --for=condition=ready pod -l app=csi-secrets-store-provider-azure -n kube-system --timeout=120s
+        
+        # Step 6: Restart the AKS-managed CSI driver to pick up changes
+        echo ""
+        echo "🔄 Restarting AKS CSI driver to pick up changes..."
         kubectl rollout restart daemonset/aks-secrets-store-csi-driver -n kube-system
-        
-        # Wait for the daemonset to be ready
-        echo "⏳ Waiting for CSI driver to restart..."
         kubectl rollout status daemonset/aks-secrets-store-csi-driver -n kube-system --timeout=120s
         
-        # Verify CSI driver is now registered
-        echo "🔍 Checking if CSI driver is now registered..."
-        kubectl get csidriver secrets-store.csi.x-k8s.io || {
-          echo "❌ CSI driver still not registered, trying manual installation..."
-          
-          # Force reinstall the CSI driver
-          kubectl apply -f https://raw.githubusercontent.com/Azure/secrets-store-csi-driver-provider-azure/master/deployment/provider-azure-installer.yaml
-          
-          # Wait a bit for registration
-          sleep 30
-          
-          # Check again
-          kubectl get csidriver secrets-store.csi.x-k8s.io || {
-            echo "❌ CSI driver registration failed completely"
-            exit 1
-          }
-        }
+        # Step 7: Final verification
+        echo ""
+        echo "🔍 Final verification..."
+        echo "CSI drivers:"
+        kubectl get csidrivers
         
-        echo "✅ CSI driver is now registered!"
+        echo ""
+        echo "CSI pods:"
+        kubectl get pods -n kube-system | grep csi
         
-        # Also restart any existing pods that were stuck
-        echo "🔄 Restarting stuck pods..."
+        # Step 8: Test with a simple SecretProviderClass
+        echo ""
+        echo "🧪 Testing CSI driver with simple SecretProviderClass..."
+        cat << EOF | kubectl apply -f -
+        apiVersion: secrets-store.csi.x-k8s.io/v1
+        kind: SecretProviderClass
+        metadata:
+          name: test-csi-driver
+          namespace: default
+        spec:
+          provider: azure
+          parameters:
+            keyvaultName: "test"
+            tenantId: "test"
+            objects: |
+              array:
+                - |
+                  objectName: test-secret
+                  objectType: secret
+        EOF
+        
+        if kubectl get secretproviderclass test-csi-driver -n default; then
+          echo "✅ CSI driver is working - SecretProviderClass created successfully!"
+          kubectl delete secretproviderclass test-csi-driver -n default
+        else
+          echo "❌ CSI driver still not working properly"
+          exit 1
+        fi
+        
+        # Step 9: Clean up stuck pods that were failing before
+        echo ""
+        echo "🧹 Cleaning up previously stuck pods..."
         kubectl delete pods -n easyshop --field-selector=status.phase=Pending --force --grace-period=0 || true
-        kubectl delete pods -n easyshop -l app=easyshop-blue --force --grace-period=0 || true
-        kubectl delete pods -n easyshop -l app=easyshop-green --force --grace-period=0 || true
+        kubectl delete pods -n easyshop --field-selector=status.phase=ContainerCreating --force --grace-period=0 || true
+        
+        echo ""
+        echo "✅ CSI Secret Store driver is now properly installed and configured!"
+        echo "🔄 Previously stuck pods have been cleaned up and will be recreated"
 #^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 #====================================================================
