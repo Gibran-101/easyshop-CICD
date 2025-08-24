@@ -246,6 +246,11 @@ jobs:
         # Verify SecretProviderClass exists
         if kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop; then
           echo "✅ SecretProviderClass deployed successfully!"
+          # Fix missing tenantId
+          echo "🔧 Fixing missing tenantId..."
+          TENANT_ID=$(az account show --query tenantId -o tsv)
+          kubectl patch secretproviderclass easyshop-keyvault-secrets -n easyshop --type='merge' -p="{\"spec\":{\"parameters\":{\"tenantId\":\"$TENANT_ID\"}}}"
+          echo "✅ tenantId added to SecretProviderClass"
         else
           echo "❌ SecretProviderClass not found"
           kubectl get secretproviderclass -A
