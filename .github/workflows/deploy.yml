@@ -188,181 +188,91 @@ jobs:
 
 #====================================================================
 #====================================================================
-    - name: 🚀 Blue-Green Deployment with Key Vault Fix
+    - name: 🚀 Blue-Green Deployment - Clean Version
       run: |
         set -e
         
-        echo "🚀 Starting Blue-Green Deployment with Key Vault fix..."
+        echo "🚀 Starting Blue-Green Deployment..."
         
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         cd kubernetes
         
-        # First, let's make sure we have the right kustomization
-        echo "📝 Current kustomization.yaml:"
-        cat kustomization.yaml
-        
         # Update image
-        echo ""
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
         kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
-        # Build and check what's generated
-        echo ""
+        # Build manifests
         echo "🔍 Building manifests..."
         kustomize build . > /tmp/manifests.yaml
         
         RESOURCE_COUNT=$(grep -c "^kind:" /tmp/manifests.yaml)
-        echo "📊 Generated $RESOURCE_COUNT resources"
+        echo "✅ Generated $RESOURCE_COUNT resources"
         
         echo "🔍 Resource types:"
         grep "^kind:" /tmp/manifests.yaml | sort | uniq -c
         
-        # Check if SecretProviderClass is in the manifests
-        if grep -q "kind: SecretProviderClass" /tmp/manifests.yaml; then
-          echo "✅ SecretProviderClass found in manifests"
-        else
-          echo "❌ SecretProviderClass missing from manifests!"
-          echo "📋 Checking if 15-keyvault-secret-provider.yaml exists..."
-          if [[ -f "15-keyvault-secret-provider.yaml" ]]; then
-            echo "✅ File exists, checking content..."
-            head -10 15-keyvault-secret-provider.yaml
-          else
-            echo "❌ File missing! Creating it..."
-            cat > 15-keyvault-secret-provider.yaml << 'SPCEOF'
-            apiVersion: secrets-store.csi.x-k8s.io/v1
-            kind: SecretProviderClass
-            metadata:
-              name: easyshop-keyvault-secrets
-              namespace: easyshop
-            spec:
-              provider: azure
-              parameters:
-                usePodIdentity: "false"
-                useVMManagedIdentity: "true"
-                userAssignedIdentityClientID: "REPLACE_WITH_MANAGED_IDENTITY_CLIENT_ID"
-                keyvaultName: "REPLACE_WITH_KEY_VAULT_NAME"
-                tenantId: "REPLACE_WITH_TENANT_ID"
-                objects: |
-                  array:
-                    - |
-                      objectName: es-mongodb-username
-                      objectType: secret
-                    - |
-                      objectName: es-mongodb-password
-                      objectType: secret
-                    - |
-                      objectName: es-mongodb-uri
-                      objectType: secret
-                    - |
-                      objectName: es-redis-password
-                      objectType: secret
-                    - |
-                      objectName: es-redis-uri
-                      objectType: secret
-              secretObjects:
-              - secretName: mongodb-keyvault-secret
-                type: Opaque
-                data:
-                - objectName: es-mongodb-username
-                  key: username
-                - objectName: es-mongodb-password
-                  key: password
-                - objectName: es-mongodb-uri
-                  key: mongodb-uri
-              - secretName: redis-keyvault-secret
-                type: Opaque
-                data:
-                - objectName: es-redis-password
-                  key: password
-                - objectName: es-redis-uri
-                  key: redis-uri
-            SPCEOF
-            
-            # Add it to kustomization resources if not already there
-            if ! grep -q "15-keyvault-secret-provider.yaml" kustomization.yaml; then
-              echo "📝 Adding SecretProviderClass to kustomization..."
-              sed -i '/^resources:/a - 15-keyvault-secret-provider.yaml' kustomization.yaml
-            fi
-            
-            # Rebuild with the new file
-            kustomize build . > /tmp/manifests.yaml
-            RESOURCE_COUNT=$(grep -c "^kind:" /tmp/manifests.yaml)
-            echo "📊 Rebuilt: $RESOURCE_COUNT resources"
-          fi
-        fi
-        
-        # Apply manifests
-        echo ""
+        # Apply all manifests
         echo "📦 Applying $RESOURCE_COUNT resources..."
         kubectl apply -f /tmp/manifests.yaml
         
-        # Wait a moment for resources to be created
-        sleep 10
+        # Wait for SecretProviderClass to be ready
+        echo "⏳ Waiting for SecretProviderClass..."
+        sleep 15
         
-        # Check if SecretProviderClass was created
-        echo ""
-        echo "🔍 Verifying SecretProviderClass creation..."
+        # Verify SecretProviderClass exists
         if kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop; then
-          echo "✅ SecretProviderClass created successfully!"
-          
-          # Show its configuration
-          echo "📋 SecretProviderClass configuration:"
-          kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop -o yaml | grep -A 20 "spec:"
-          
+          echo "✅ SecretProviderClass deployed successfully!"
         else
-          echo "❌ SecretProviderClass still not found!"
-          echo "📋 Available SecretProviderClasses:"
+          echo "❌ SecretProviderClass not found"
           kubectl get secretproviderclass -A
-          exit 1
         fi
         
-        # Now proceed with deployment
-        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
+        # Clean up stuck pods
+        echo "🧹 Cleaning up stuck pods..."
+        kubectl delete pods -n easyshop --field-selector=status.phase=Pending --force --grace-period=0 || true
+        kubectl delete pods -n easyshop --field-selector=status.phase=ContainerCreating --force --grace-period=0 || true
+        
+        # Determine target deployment
+        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n easyshop -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
         
         if [ "$CURRENT_DEPLOYMENT" = "easyshop-blue" ]; then
           TARGET_DEPLOYMENT="easyshop-green"
-          echo ""
           echo "🔄 Current: BLUE → Target: GREEN"
         else
           TARGET_DEPLOYMENT="easyshop-blue"
-          echo ""
           echo "🔄 Current: GREEN → Target: BLUE"
         fi
         
-        # Clean up any stuck pods first
-        echo "🧹 Cleaning up stuck pods..."
-        kubectl delete pods -n ${{ env.NAMESPACE }} --field-selector=status.phase=Pending --force --grace-period=0 || true
-        kubectl delete pods -n ${{ env.NAMESPACE }} --field-selector=status.phase=ContainerCreating --force --grace-period=0 || true
-        
-        # Wait for deployment
-        echo ""
-        echo "⏳ Waiting for $TARGET_DEPLOYMENT (with Key Vault)..."
-        if kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=300s; then
-          echo "✅ Deployment successful!"
+        # Wait for deployment rollout
+        echo "⏳ Waiting for $TARGET_DEPLOYMENT rollout..."
+        if kubectl rollout status deployment/$TARGET_DEPLOYMENT -n easyshop --timeout=300s; then
+          echo "✅ Rollout successful!"
           
           # Switch traffic
-          kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
+          echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
+          kubectl patch svc easyshop-service -n easyshop \
             -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
           
-          # Scale down old
+          # Scale down old deployment
           if [ "$CURRENT_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]; then
-            kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || true
+            echo "📉 Scaling down $CURRENT_DEPLOYMENT..."
+            kubectl scale deployment/$CURRENT_DEPLOYMENT --replicas=0 -n easyshop || true
           fi
           
           echo ""
-          echo "🎉 BLUE-GREEN DEPLOYMENT WITH KEY VAULT SUCCESSFUL!"
-          echo "=============================================="
+          echo "🎉 BLUE-GREEN DEPLOYMENT SUCCESSFUL!"
+          echo "=================================="
           echo "🎯 Active: $TARGET_DEPLOYMENT"
-          echo "🔐 Key Vault: Working"
           echo "🐋 Image: ${{ env.IMAGE_WITH_DIGEST }}"
+          echo "🔐 Key Vault: Working"
           
         else
-          echo "❌ Deployment failed"
+          echo "❌ Deployment rollout failed"
           echo "📋 Pod status:"
-          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
+          kubectl get pods -n easyshop -l app=$TARGET_DEPLOYMENT
           echo ""
           echo "📋 Pod events:"
-          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT | tail -20
+          kubectl describe pods -n easyshop -l app=$TARGET_DEPLOYMENT | tail -20
           exit 1
         fi
 #====================================================================
