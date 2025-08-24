@@ -300,6 +300,33 @@ jobs:
           exit 1
         fi
 #====================================================================
+    - name: 🔧 Fix SecretProviderClass tenantId
+      run: |
+        echo "🔧 Fixing missing tenantId in SecretProviderClass..."
+        
+        # Get tenant ID from Azure CLI
+        TENANT_ID=$(az account show --query tenantId -o tsv)
+        echo "🔍 Tenant ID: $TENANT_ID"
+        
+        # Get current SecretProviderClass and check if tenantId is missing
+        echo "📋 Checking current SecretProviderClass..."
+        kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop -o jsonpath='{.spec.parameters.tenantId}' || echo "tenantId missing"
+        
+        # Patch the SecretProviderClass to add tenantId
+        echo "🔧 Adding tenantId to SecretProviderClass..."
+        kubectl patch secretproviderclass easyshop-keyvault-secrets -n easyshop --type='merge' -p="{\"spec\":{\"parameters\":{\"tenantId\":\"$TENANT_ID\"}}}"
+        
+        # Verify the fix
+        echo "✅ Verification - tenantId now set to:"
+        kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop -o jsonpath='{.spec.parameters.tenantId}'
+        echo ""
+        
+        # Clean up stuck pods
+        echo "🧹 Cleaning up stuck pods to retry with correct config..."
+        kubectl delete pods -n easyshop --field-selector=status.phase=ContainerCreating --force --grace-period=0 || true
+        
+        echo "✅ SecretProviderClass tenantId fix completed!"
+
 #====================================================================
 
     - name: 🔍 Verify Deployment
