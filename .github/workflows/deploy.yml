@@ -108,24 +108,24 @@ jobs:
         sudo mv kustomize /usr/local/bin/
 #===========================================================================
     # Workflow-compatible CRD creation
-    - name: 🔧 Install SecretProviderClass CRD
+    - name: 🔧 Install CSI Driver CRDs
       run: |
-        echo "📦 Installing SecretProviderClass CRD from official repo..."
+        echo "📦 Installing CSI Driver CRDs..."
 
-        # Apply CRDs straight from Secrets Store CSI release
-        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/main/deploy/crds/secrets-store.csi.x-k8s.io_secretproviderclasses.yaml
+        # Apply SecretProviderClasses CRD
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/master/deploy/secrets-store.csi.x-k8s.io_secretproviderclasses.yaml
 
-        # Wait a bit for CRD to be established
-        echo "⏳ Waiting for CRD to be established..."
+        # Apply SecretProviderClassPodStatuses CRD
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/master/deploy/secrets-store.csi.x-k8s.io_secretproviderclasspodstatuses.yaml
+
+        echo "⏳ Giving CRDs some time to register..."
         sleep 20
 
-        # Verify installation
-        if kubectl get crd secretproviderclasses.secrets-store.csi.k8s.io; then
-          echo "✅ SecretProviderClass CRD installed successfully!"
-        else
-          echo "❌ CRD installation failed"
-          exit 1
-        fi
+        # Verify they exist
+        kubectl get crd secretproviderclasses.secrets-store.csi.x-k8s.io && kubectl get crd secretproviderclasspodstatuses.secrets-store.csi.x-k8s.io
+
+        echo "✅ CRDs are installed!"
+
 
 #===========================================================================
 
