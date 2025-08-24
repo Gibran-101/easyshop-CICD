@@ -106,6 +106,37 @@ jobs:
         echo "📦 Installing kustomize..."
         curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
         sudo mv kustomize /usr/local/bin/
+#*************************************************************************
+    # ADD THIS NEW DEBUG STEP HERE - BEFORE THE DEPLOYMENT STEP:
+    - name: 🔍 Debug SecretProviderClass Configuration
+      run: |
+        echo "🔍 Checking SecretProviderClass configuration..."
+        
+        # Show the actual SecretProviderClass that was applied
+        echo "📋 SecretProviderClass YAML:"
+        kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop -o yaml 2>/dev/null || echo "SecretProviderClass not found"
+        
+        # Check if CSI driver is installed
+        echo ""
+        echo "🔍 CSI Secret Store driver pods:"
+        kubectl get pods -n kube-system | grep csi || echo "No CSI pods found"
+        
+        # Check events for CSI-related errors
+        echo ""
+        echo "🔍 Recent events in namespace:"
+        kubectl get events -n easyshop --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events found"
+        
+        # Check if the managed identity exists and has correct permissions
+        echo ""
+        echo "🔍 Managed identity in SecretProviderClass:"
+        kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop -o jsonpath='{.spec.parameters.userAssignedIdentityClientID}' 2>/dev/null || echo "Could not get managed identity ID"
+        
+        # Check AKS addons
+        echo ""
+        echo "🔍 AKS addons status:"
+        az aks show --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER_NAME }} --query addonProfiles
+
+#*************************************************************************
 #====================================================================
 #====================================================================
     - name: 🚀 Blue-Green Deployment - Final Fix

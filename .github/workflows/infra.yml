@@ -31,7 +31,7 @@ jobs:
           dns_zone_name = "${{ secrets.TF_DNS_ZONE_NAME }}"
           argocd_namespace = "${{ secrets.TF_ARGOCD_NAMESPACE }}"
           github_repo_url  = "${{ secrets.TF_GITHUB_REPO_URL }}"
-          observability_namespace = "${{ secrets.TF_OBSERVABILITY_NAMESPACE }}"
+
           admin_object_id = "${{ secrets.TF_ADMIN_OBJECT_ID }}"
           tags = {
             Project   = "EasyShop"
