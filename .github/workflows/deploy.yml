@@ -137,6 +137,47 @@ jobs:
         az aks show --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER_NAME }} --query addonProfiles
 
 #*************************************************************************
+
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    # ADD THIS STEP AFTER THE DEBUG STEP AND BEFORE DEPLOYMENT:
+    - name: 🔧 Fix CSI Secret Store Driver Registration
+      run: |
+        echo "🔧 Fixing CSI Secret Store driver registration..."
+        
+        # Restart the CSI driver daemonset to re-register it
+        kubectl rollout restart daemonset/aks-secrets-store-csi-driver -n kube-system
+        
+        # Wait for the daemonset to be ready
+        echo "⏳ Waiting for CSI driver to restart..."
+        kubectl rollout status daemonset/aks-secrets-store-csi-driver -n kube-system --timeout=120s
+        
+        # Verify CSI driver is now registered
+        echo "🔍 Checking if CSI driver is now registered..."
+        kubectl get csidriver secrets-store.csi.x-k8s.io || {
+          echo "❌ CSI driver still not registered, trying manual installation..."
+          
+          # Force reinstall the CSI driver
+          kubectl apply -f https://raw.githubusercontent.com/Azure/secrets-store-csi-driver-provider-azure/master/deployment/provider-azure-installer.yaml
+          
+          # Wait a bit for registration
+          sleep 30
+          
+          # Check again
+          kubectl get csidriver secrets-store.csi.x-k8s.io || {
+            echo "❌ CSI driver registration failed completely"
+            exit 1
+          }
+        }
+        
+        echo "✅ CSI driver is now registered!"
+        
+        # Also restart any existing pods that were stuck
+        echo "🔄 Restarting stuck pods..."
+        kubectl delete pods -n easyshop --field-selector=status.phase=Pending --force --grace-period=0 || true
+        kubectl delete pods -n easyshop -l app=easyshop-blue --force --grace-period=0 || true
+        kubectl delete pods -n easyshop -l app=easyshop-green --force --grace-period=0 || true
+#^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
 #====================================================================
 #====================================================================
     - name: 🚀 Blue-Green Deployment - Final Fix
