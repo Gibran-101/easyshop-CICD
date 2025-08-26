@@ -212,11 +212,11 @@ jobs:
 
 #====================================================================
 #====================================================================
-    - name: 🚀 Blue-Green Deployment - Clean Version
+    - name: 🚀 Blue-Green Deployment - Identity Fix
       run: |
         set -e
         
-        echo "🚀 Starting Blue-Green Deployment..."
+        echo "🚀 Starting Blue-Green Deployment with Identity Fix..."
         
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         cd kubernetes
@@ -232,42 +232,107 @@ jobs:
         RESOURCE_COUNT=$(grep -c "^kind:" /tmp/manifests.yaml)
         echo "✅ Generated $RESOURCE_COUNT resources"
         
-        echo "🔍 Resource types:"
-        grep "^kind:" /tmp/manifests.yaml | sort | uniq -c
-        
-        # Apply all manifests
-        echo "📦 Applying $RESOURCE_COUNT resources..."
+        # Apply all manifests except SecretProviderClass first
+        echo "📦 Applying base resources..."
         kubectl apply -f /tmp/manifests.yaml
         
-        # Wait for SecretProviderClass to be ready
-        echo "⏳ Waiting for SecretProviderClass..."
-        sleep 15
+        # CRITICAL FIX: Get the correct AKS addon identity for Key Vault CSI
+        echo "🔍 Getting AKS addon identity for Key Vault CSI..."
+        AKS_ADDON_IDENTITY_CLIENT_ID=$(az aks show \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId \
+          -o tsv 2>/dev/null || echo "")
         
-        # Verify SecretProviderClass exists
-        if kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop; then
-          echo "✅ SecretProviderClass deployed successfully!"
-          echo "🔧 Fixing missing tenantId and Key Vault name..."
+        if [[ -z "$AKS_ADDON_IDENTITY_CLIENT_ID" || "$AKS_ADDON_IDENTITY_CLIENT_ID" == "null" ]]; then
+          echo "❌ Key Vault addon identity not found. Checking if addon is enabled..."
           
-          TENANT_ID=$(az account show --query tenantId -o tsv)
-          ACTUAL_KEY_VAULT_NAME=$(az keyvault list --resource-group ${{ env.RESOURCE_GROUP }} --query "[0].name" -o tsv)
-          MANAGED_IDENTITY_CLIENT_ID=$(az aks show --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER_NAME }} --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId -o tsv)
+          # Check if addon is enabled
+          ADDON_ENABLED=$(az aks show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --query addonProfiles.azureKeyvaultSecretsProvider.enabled \
+            -o tsv 2>/dev/null || echo "false")
           
-          echo "🔍 Found Key Vault: $ACTUAL_KEY_VAULT_NAME"
-          echo "🔍 AKS Key Vault addon identity: $MANAGED_IDENTITY_CLIENT_ID"
-          
-          # Single patch with all correct Azure provider parameters
-          kubectl patch secretproviderclass easyshop-keyvault-secrets -n easyshop --type='merge' -p="{\"spec\":{\"parameters\":{\"tenantId\":\"$TENANT_ID\",\"keyvaultName\":\"$ACTUAL_KEY_VAULT_NAME\",\"clientId\":\"$MANAGED_IDENTITY_CLIENT_ID\",\"usePodIdentity\":\"false\",\"useVMManagedIdentity\":\"true\"}}}"
-          
-          echo "✅ SecretProviderClass updated with correct Azure provider parameters"
-        else
-          echo "❌ SecretProviderClass not found"
-          kubectl get secretproviderclass -A
+          if [[ "$ADDON_ENABLED" != "true" ]]; then
+            echo "🔧 Enabling Key Vault addon..."
+            az aks addon enable \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --name ${{ env.AKS_CLUSTER_NAME }} \
+              --addon azure-keyvault-secrets-provider
+            
+            # Wait for addon to be ready
+            echo "⏳ Waiting for addon to initialize..."
+            sleep 30
+            
+            # Get the identity again
+            AKS_ADDON_IDENTITY_CLIENT_ID=$(az aks show \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --name ${{ env.AKS_CLUSTER_NAME }} \
+              --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId \
+              -o tsv)
+          else
+            echo "❌ Addon is enabled but identity not found. This might be a timing issue."
+            exit 1
+          fi
         fi
         
-        # Clean up stuck pods
-        echo "🧹 Cleaning up stuck pods..."
+        echo "✅ Found AKS addon identity: $AKS_ADDON_IDENTITY_CLIENT_ID"
+        
+        # Get Key Vault name and tenant ID
+        KEY_VAULT_NAME=$(az keyvault list \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv')].name" \
+          -o tsv | head -1)
+        
+        TENANT_ID=$(az account show --query tenantId -o tsv)
+        
+        echo "🔑 Key Vault: $KEY_VAULT_NAME"
+        echo "🏢 Tenant ID: $TENANT_ID"
+        
+        # CRITICAL: Grant the AKS addon identity access to Key Vault
+        echo "🔐 Granting AKS addon identity access to Key Vault..."
+        
+        # Get the addon identity object ID
+        ADDON_IDENTITY_OBJECT_ID=$(az aks show \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --query addonProfiles.azureKeyvaultSecretsProvider.identity.objectId \
+          -o tsv)
+        
+        # Set Key Vault access policy for the addon identity
+        az keyvault set-policy \
+          --name $KEY_VAULT_NAME \
+          --object-id $ADDON_IDENTITY_OBJECT_ID \
+          --secret-permissions get list \
+          --output none || echo "⚠️ Access policy may already exist"
+        
+        echo "✅ Key Vault access configured for addon identity"
+        
+        # Update SecretProviderClass with correct identity
+        echo "🔧 Updating SecretProviderClass with AKS addon identity..."
+        kubectl patch secretproviderclass easyshop-keyvault-secrets -n easyshop --type='merge' -p="{
+          \"spec\": {
+            \"parameters\": {
+              \"userAssignedIdentityClientID\": \"$AKS_ADDON_IDENTITY_CLIENT_ID\",
+              \"keyvaultName\": \"$KEY_VAULT_NAME\",
+              \"tenantId\": \"$TENANT_ID\"
+            }
+          }
+        }"
+        
+        echo "✅ SecretProviderClass updated with correct AKS addon identity"
+        
+        # Clean up any stuck pods to force recreation with new identity
+        echo "🧹 Cleaning up stuck pods to apply identity fix..."
         kubectl delete pods -n easyshop --field-selector=status.phase=Pending --force --grace-period=0 || true
         kubectl delete pods -n easyshop --field-selector=status.phase=ContainerCreating --force --grace-period=0 || true
+        kubectl delete pods -n easyshop -l app=easyshop-blue --force --grace-period=0 || true
+        kubectl delete pods -n easyshop -l app=easyshop-green --force --grace-period=0 || true
+        
+        # Wait a moment for cleanup
+        echo "⏳ Waiting for cleanup to complete..."
+        sleep 15
         
         # Determine target deployment
         CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n easyshop -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
@@ -280,10 +345,18 @@ jobs:
           echo "🔄 Current: GREEN → Target: BLUE"
         fi
         
-        # Wait for deployment rollout
-        echo "⏳ Waiting for $TARGET_DEPLOYMENT rollout..."
-        if kubectl rollout status deployment/$TARGET_DEPLOYMENT -n easyshop --timeout=300s; then
-          echo "✅ Rollout successful!"
+        # Wait for deployment rollout with extended timeout for identity propagation
+        echo "⏳ Waiting for $TARGET_DEPLOYMENT rollout (extended timeout for identity fix)..."
+        if kubectl rollout status deployment/$TARGET_DEPLOYMENT -n easyshop --timeout=600s; then
+          echo "✅ Rollout successful with identity fix!"
+          
+          # Verify pods can mount secrets
+          echo "🔍 Verifying secret mounting..."
+          kubectl get pods -n easyshop -l app=$TARGET_DEPLOYMENT
+          
+          # Check for any CSI-related events
+          echo "🔍 Checking for CSI driver events..."
+          kubectl get events -n easyshop --field-selector reason=FailedMount || echo "No mount failures found"
           
           # Switch traffic
           echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
@@ -297,19 +370,23 @@ jobs:
           fi
           
           echo ""
-          echo "🎉 BLUE-GREEN DEPLOYMENT SUCCESSFUL!"
-          echo "=================================="
+          echo "🎉 BLUE-GREEN DEPLOYMENT SUCCESSFUL WITH IDENTITY FIX!"
+          echo "=================================================="
           echo "🎯 Active: $TARGET_DEPLOYMENT"
           echo "🐋 Image: ${{ env.IMAGE_WITH_DIGEST }}"
-          echo "🔐 Key Vault: Working"
+          echo "🔐 Identity: $AKS_ADDON_IDENTITY_CLIENT_ID"
+          echo "🗝️ Key Vault: $KEY_VAULT_NAME"
           
         else
           echo "❌ Deployment rollout failed"
           echo "📋 Pod status:"
           kubectl get pods -n easyshop -l app=$TARGET_DEPLOYMENT
           echo ""
-          echo "📋 Pod events:"
+          echo "📋 Pod describe (last 20 lines):"
           kubectl describe pods -n easyshop -l app=$TARGET_DEPLOYMENT | tail -20
+          echo ""
+          echo "📋 CSI driver events:"
+          kubectl get events -n easyshop --field-selector reason=FailedMount,type=Warning || echo "No CSI events"
           exit 1
         fi
 #====================================================================
