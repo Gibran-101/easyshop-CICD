@@ -44,3 +44,14 @@ output "node_resource_group" {
   description = "The auto-generated resource group for AKS nodes"
   value       = azurerm_kubernetes_cluster.aks.node_resource_group
 }
+
+# NEW: Key Vault addon identity outputs
+output "key_vault_addon_identity" {
+  description = "The managed identity created by the Key Vault addon"
+  value = {
+    client_id   = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].client_id
+    object_id   = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].object_id
+    user_assigned_identity_id = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].user_assigned_identity_id
+  }
+  sensitive = false
+}

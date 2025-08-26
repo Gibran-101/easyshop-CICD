@@ -7,31 +7,30 @@ resource "azurerm_kubernetes_cluster" "aks" {
   dns_prefix          = var.aks_cluster_name # Creates: easyshop-aks.eastus.azmk8s.io
 
   # Kubernetes version - using latest stable
-  kubernetes_version = var.kubernetes_version
+  kubernetes_version        = var.kubernetes_version
   workload_identity_enabled = true
-  oidc_issuer_enabled      = true
+  oidc_issuer_enabled       = true
 
   # Default node pool where application pods run
   # Optimized for cost with managed disks and proper sizing
-default_node_pool {
-  name            = "default"
-  vm_size         = var.vm_size
-  type            = "VirtualMachineScaleSets"
-  os_disk_size_gb = 30
-  vnet_subnet_id  = var.vnet_subnet_id
+  default_node_pool {
+    name            = "default"
+    vm_size         = var.vm_size
+    type            = "VirtualMachineScaleSets"
+    os_disk_size_gb = 30
+    vnet_subnet_id  = var.vnet_subnet_id
 
-  # Autoscaling configuration
-  node_count          = var.enable_auto_scaling ? null : var.node_count
-  min_count           = var.enable_auto_scaling ? var.min_count : null
-  max_count           = var.enable_auto_scaling ? var.max_count : null
+    # Autoscaling configuration
+    node_count = var.enable_auto_scaling ? null : var.node_count
+    min_count  = var.enable_auto_scaling ? var.min_count : null
+    max_count  = var.enable_auto_scaling ? var.max_count : null
 
-  node_labels = {
-    nodepool    = "default"
-    workload    = "general"
-    environment = "dev"
+    node_labels = {
+      nodepool    = "default"
+      workload    = "general"
+      environment = "dev"
+    }
   }
-}
-
 
   # Managed identity for secure Azure service access without stored credentials
   # Automatically rotated and managed by Azure
@@ -52,6 +51,8 @@ default_node_pool {
   # Enable RBAC for granular access control to cluster resources
   role_based_access_control_enabled = true
 
+  # CRITICAL: Enable Key Vault secrets provider addon
+  # This creates the managed identity we'll use for CSI driver
   key_vault_secrets_provider {
     secret_rotation_enabled = true
   }
@@ -68,10 +69,10 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
   depends_on = [azurerm_kubernetes_cluster.aks]
 }
 
-# Grant AKS access to read secrets from Key Vault
-# Enables CSI driver to mount secrets as volumes in pods
-resource "azurerm_role_assignment" "aks_keyvault_reader" {
-  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+# Grant AKS addon identity access to Key Vault secrets
+# This uses the addon identity instead of kubelet identity
+resource "azurerm_role_assignment" "aks_addon_keyvault_access" {
+  principal_id         = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].object_id
   role_definition_name = "Key Vault Secrets User"
   scope                = var.key_vault_id
 
