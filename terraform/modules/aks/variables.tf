@@ -30,7 +30,7 @@ variable "acr_id" {
 
 # Optional Key Vault ID for CSI driver integration - leave empty to skip
 variable "key_vault_id" {
-  description = "ID of the Key Vault (optional)"
+  description = "ID of the Key Vault for CSI driver access"
   type        = string
   default     = ""
 }
@@ -89,11 +89,4 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
-}
-
-# Optional Key Vault ID for CSI driver integration
-variable "key_vault_id" {
-  description = "ID of the Key Vault for CSI driver access"
-  type        = string
-  default     = ""
 }
