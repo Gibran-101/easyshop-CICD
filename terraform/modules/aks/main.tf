@@ -78,3 +78,15 @@ resource "azurerm_role_assignment" "aks_addon_keyvault_access" {
 
   depends_on = [azurerm_kubernetes_cluster.aks]
 }
+
+#Grant AKS addon identity access to Key Vault secrets
+resource "azurerm_role_assignment" "aks_addon_keyvault_access" {
+  principal_id         = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].object_id
+  role_definition_name = "Key Vault Secrets User"
+  scope                = var.key_vault_id
+  
+  depends_on = [azurerm_kubernetes_cluster.aks]
+  
+  # Prevent issues with identity propagation
+  skip_service_principal_aad_check = true
+}

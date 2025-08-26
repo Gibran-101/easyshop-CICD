@@ -90,3 +90,10 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# Optional Key Vault ID for CSI driver integration
+variable "key_vault_id" {
+  description = "ID of the Key Vault for CSI driver access"
+  type        = string
+  default     = ""
+}
