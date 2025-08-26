@@ -56,14 +56,6 @@ output "dns_nameservers" {
 # Kubernetes Integration Outputs
 # =======================
 
-# Client ID of the managed identity for CSI Secret Store driver
-# Used in SecretProviderClass manifests to access Key Vault secrets
-output "managed_identity_client_id" {
-  description = "Client ID of the managed identity for Key Vault access"
-  value       = module.keyvault_secrets.managed_identity_client_id
-  sensitive   = false
-}
-
 # Azure AD tenant ID for authentication configuration
 # Required for CSI Secret Store driver and application authentication
 output "tenant_id" {
