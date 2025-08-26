@@ -31,7 +31,7 @@ locals {
 # Provides centralized secret management with proper access controls
 module "app_keyvault" {
   source              = "./modules/vault"
-  key_vault_name      = local.keyvault_name 
+  key_vault_name      = local.keyvault_name
   location            = var.location
   resource_group_name = module.networking.resource_group_name
   tenant_id           = data.azurerm_client_config.current.tenant_id
@@ -106,7 +106,7 @@ module "aks" {
   vnet_subnet_id      = module.networking.aks_subnet_id
   acr_id              = module.acr.acr_id
   key_vault_id        = module.app_keyvault.key_vault_id
-  
+
   # Fixed: Only pass values when needed
   node_count          = 2
   vm_size             = "Standard_B2s"
@@ -145,18 +145,18 @@ module "application_gateway" {
   source = "./modules/application-gateway"
 
   # Core configuration
-  project_name            = var.project_name
-  resource_group_name     = module.networking.resource_group_name
-  location                = var.location
-  app_gateway_subnet_id   = module.networking.app_gateway_subnet_id
-  public_ip_id            = azurerm_public_ip.ingress_ip.id
-  dns_zone_name           = var.dns_zone_name
-  key_vault_id            = module.app_keyvault.key_vault_id
+  project_name          = var.project_name
+  resource_group_name   = module.networking.resource_group_name
+  location              = var.location
+  app_gateway_subnet_id = module.networking.app_gateway_subnet_id
+  public_ip_id          = azurerm_public_ip.ingress_ip.id
+  dns_zone_name         = var.dns_zone_name
+  key_vault_id          = module.app_keyvault.key_vault_id
 
   # Production configuration
-  sku_tier    = var.app_gateway_sku_tier
-  enable_waf  = var.app_gateway_enable_waf
-  
+  sku_tier   = var.app_gateway_sku_tier
+  enable_waf = var.app_gateway_enable_waf
+
   # Auto-scaling for traffic spikes
   autoscale_config = {
     min_capacity = var.app_gateway_min_capacity

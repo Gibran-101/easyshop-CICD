@@ -7,8 +7,8 @@ resource "azurerm_key_vault" "this" {
   tenant_id           = var.tenant_id
   sku_name            = "standard"
 
- # Security configuration - controls what Azure services can use this vault for
-  enabled_for_disk_encryption     = true  # VMs can get disk encryption keys
+  # Security configuration - controls what Azure services can use this vault for
+  enabled_for_disk_encryption     = true # VMs can get disk encryption keys
   enabled_for_template_deployment = true #VMs can get certificates during startup
   # purge_protection_enabled        = true # Keep as true (can't be changed anyway)
   # soft_delete_retention_days      = 90   # Keep original value
@@ -53,10 +53,10 @@ resource "azurerm_key_vault" "this" {
     ]
   }
 
-# Access policy for service principal (for GitHub Actions)
+  # Access policy for service principal (for GitHub Actions)
   access_policy {
     tenant_id = var.tenant_id
-    object_id = "3f185b42-0d3e-498a-b32d-862420950a20"  # Your service principal object ID
+    object_id = "3f185b42-0d3e-498a-b32d-862420950a20" # Your service principal object ID
 
     secret_permissions = [
       "Get",

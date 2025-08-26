@@ -20,7 +20,7 @@ output "resource_group_name" {
 output "backend_address_pools" {
   description = "Backend address pools configuration"
   value = {
-    for pool in azurerm_application_gateway.this.backend_address_pool : 
+    for pool in azurerm_application_gateway.this.backend_address_pool :
     pool.name => {
       id   = pool.id
       name = pool.name
@@ -57,9 +57,9 @@ output "http_listeners" {
   value = {
     for listener in azurerm_application_gateway.this.http_listener :
     listener.name => {
-      name         = listener.name
-      id           = listener.id
-      protocol     = listener.protocol
+      name          = listener.name
+      id            = listener.id
+      protocol      = listener.protocol
       frontend_port = listener.frontend_port_name
     }
   }
@@ -77,8 +77,8 @@ output "health_probes" {
   value = {
     for probe in azurerm_application_gateway.this.probe :
     probe.name => {
-      name = probe.name
-      path = probe.path
+      name     = probe.name
+      path     = probe.path
       protocol = probe.protocol
     }
   }

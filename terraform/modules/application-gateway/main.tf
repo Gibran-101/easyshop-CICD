@@ -65,10 +65,10 @@ resource "azurerm_application_gateway" "this" {
   dynamic "waf_configuration" {
     for_each = var.enable_waf ? [1] : []
     content {
-      enabled           = true
-      firewall_mode     = "Prevention"
-      rule_set_type     = "OWASP"
-      rule_set_version  = "3.2"
+      enabled          = true
+      firewall_mode    = "Prevention"
+      rule_set_type    = "OWASP"
+      rule_set_version = "3.2"
     }
   }
 

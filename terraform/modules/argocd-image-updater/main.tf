@@ -1,10 +1,10 @@
 # Deploy ArgoCD Image Updater via Helm to auto-update image tags in Git repos
 resource "helm_release" "argocd_image_updater" {
-  name       = "argocd-image-updater"                       # Helm release name
-  repository = "https://argoproj.github.io/argo-helm"       # Official Argo Helm repo
-  chart      = "argocd-image-updater"                       # Chart name
-  version    = "0.9.1"                                      # Chart version
-  namespace  = var.argocd_namespace                         # Deploy in ArgoCD namespace
+  name       = "argocd-image-updater"                 # Helm release name
+  repository = "https://argoproj.github.io/argo-helm" # Official Argo Helm repo
+  chart      = "argocd-image-updater"                 # Chart name
+  version    = "0.9.1"                                # Chart version
+  namespace  = var.argocd_namespace                   # Deploy in ArgoCD namespace
 
   # Logging verbosity level
   set {
@@ -14,7 +14,7 @@ resource "helm_release" "argocd_image_updater" {
 
   # Update policy: semver range within 1.x.x versions
   set {
-    name  = "config.applications.defaultUpdateStrategy"
+    name = "config.applications.defaultUpdateStrategy"
     # value = "semver:~1.0"
     value = var.default_update_strategy
   }
@@ -47,8 +47,8 @@ resource "helm_release" "argocd_image_updater" {
 # Kubernetes secret for ACR authentication
 resource "kubernetes_secret" "acr_secret" {
   metadata {
-    name      = "acr-secret"           # Secret name
-    namespace = var.argocd_namespace   # Same namespace as ArgoCD
+    name      = "acr-secret"         # Secret name
+    namespace = var.argocd_namespace # Same namespace as ArgoCD
   }
 
   type = "kubernetes.io/dockerconfigjson" # Docker auth secret type

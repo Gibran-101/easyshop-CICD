@@ -8,11 +8,11 @@ provider "azurerm" {
     # Key Vault configuration for secure secret management
     key_vault {
       # Don't auto-purge soft-deleted vaults to prevent accidental data loss
-      purge_soft_delete_on_destroy    = false
+      purge_soft_delete_on_destroy = false
       # Allow recovery of soft-deleted Key Vaults during deployment
       recover_soft_deleted_key_vaults = false
     }
-    
+
     # Resource group configuration
     resource_group {
       # Allow Terraform to delete resource groups even if they contain resources
