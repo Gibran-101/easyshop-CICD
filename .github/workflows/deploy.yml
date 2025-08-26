@@ -255,7 +255,21 @@ jobs:
           echo "🔍 Found Key Vault: $ACTUAL_KEY_VAULT_NAME"
           
           # Patch both tenantId and keyvaultName
-          kubectl patch secretproviderclass easyshop-keyvault-secrets -n easyshop --type='merge' -p="{\"spec\":{\"parameters\":{\"tenantId\":\"$TENANT_ID\",\"keyvaultName\":\"$ACTUAL_KEY_VAULT_NAME\"}}}"
+          
+          # Get the managed identity client ID from Terraform outputs
+          MANAGED_IDENTITY_CLIENT_ID=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop -o jsonpath='{.spec.parameters.userAssignedIdentityClientID}')
+          echo "🔍 Current managed identity: $MANAGED_IDENTITY_CLIENT_ID"
+          
+          # If it's empty or placeholder, get from AKS addon
+          if [[ -z "$MANAGED_IDENTITY_CLIENT_ID" || "$MANAGED_IDENTITY_CLIENT_ID" == "87febd96-c8a7-4ceb-bcee-1095396c8662" ]]; then
+            echo "🔍 Getting managed identity from AKS addon..."
+            MANAGED_IDENTITY_CLIENT_ID=$(az aks show --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER_NAME }} --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId -o tsv)
+            echo "🔍 AKS addon managed identity: $MANAGED_IDENTITY_CLIENT_ID"
+          fi
+          
+          # Patch with all required parameters
+          kubectl patch secretproviderclass easyshop-keyvault-secrets -n easyshop --type='merge' -p="{\"spec\":{\"parameters\":{\"tenantId\":\"$TENANT_ID\",\"keyvaultName\":\"$ACTUAL_KEY_VAULT_NAME\",\"userAssignedIdentityClientID\":\"$MANAGED_IDENTITY_CLIENT_ID\"}}}"
+
           echo "✅ tenantId and Key Vault name fixed"
         else
           echo "❌ SecretProviderClass not found"
