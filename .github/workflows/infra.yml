@@ -133,6 +133,28 @@ jobs:
         run: |
           echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
           terraform init -backend-config="backend.conf" -reconfigure
+          
+      - name: 🔍 Pre-Apply Validation
+        run: |
+          echo "🔍 Validating Azure resources before apply..."
+          
+          # Check if resource group exists and its status
+          if az group exists --name ${{ secrets.TF_PROJECT_NAME }}-rg; then
+            RG_STATUS=$(az group show --name ${{ secrets.TF_PROJECT_NAME }}-rg --query "properties.provisioningState" -o tsv)
+            echo "📋 Resource group exists with status: $RG_STATUS"
+            
+            if [[ "$RG_STATUS" == "Deleting" ]]; then
+              echo "❌ Resource group is being deleted. Cannot proceed with apply."
+              echo "⏳ Please wait for deletion to complete and re-run the workflow."
+              exit 1
+            fi
+          else
+            echo "✅ Resource group does not exist - ready for creation"
+          fi
+          
+          # Validate Terraform configuration
+          terraform validate
+          echo "✅ Terraform configuration is valid"
       - uses: actions/download-artifact@v4
         with:
           name: terraform-plan
@@ -140,7 +162,56 @@ jobs:
       - name: Terraform Apply & Export
         id: export
         run: |
-          terraform apply tfplan -no-color
+          # Check if resource group is being deleted and wait if necessary
+          echo "🔍 Checking resource group status..."
+          RG_STATUS=$(az group show --name ${{ secrets.TF_PROJECT_NAME }}-rg --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound")
+          echo "📋 Resource group status: $RG_STATUS"
+          
+          if [[ "$RG_STATUS" == "Deleting" ]]; then
+            echo "⚠️ Resource group is being deleted. Waiting for completion..."
+            
+            # Wait for deletion to complete (max 10 minutes)
+            for i in {1..60}; do
+              sleep 10
+              RG_EXISTS=$(az group exists --name ${{ secrets.TF_PROJECT_NAME }}-rg)
+              if [[ "$RG_EXISTS" == "false" ]]; then
+                echo "✅ Resource group deletion completed"
+                break
+              fi
+              echo "⏳ Still waiting for deletion... ($i/60)"
+            done
+            
+            # Refresh Terraform state after deletion
+            echo "🔄 Refreshing Terraform state..."
+            terraform refresh -var-file="terraform.tfvars" || echo "State refresh completed"
+          fi
+          
+          # Apply with retry logic for transient Azure issues
+          echo "🚀 Applying Terraform configuration..."
+          RETRY_COUNT=0
+          MAX_RETRIES=3
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if terraform apply tfplan -no-color; then
+              echo "✅ Terraform apply successful!"
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "⚠️ Terraform apply failed. Retrying in 30 seconds... (Attempt $RETRY_COUNT/$MAX_RETRIES)"
+                sleep 30
+                
+                # Refresh state before retry
+                terraform refresh -var-file="terraform.tfvars" || echo "State refresh completed"
+              else
+                echo "❌ Terraform apply failed after $MAX_RETRIES attempts"
+                exit 1
+              fi
+            fi
+          done
+          
+          # Export outputs
+          echo "📤 Exporting Terraform outputs..."
           echo "key_vault_name=$(terraform output -raw key_vault_name 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
           echo "managed_identity_client_id=$(terraform output -raw managed_identity_client_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
           echo "tenant_id=$(terraform output -raw tenant_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
