@@ -104,7 +104,7 @@ spec:
       volumes:
       - name: keyvault-secrets
         csi:
-          driver: secrets-store.csi.x-k8s.io
+          driver: secrets-store.csi.k8s.io
           readOnly: true
           volumeAttributes:
             secretProviderClass: "easyshop-keyvault-secrets"
