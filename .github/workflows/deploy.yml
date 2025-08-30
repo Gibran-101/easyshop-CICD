@@ -164,49 +164,6 @@ jobs:
         kubectl get pods -n kube-system -l app=secrets-store-csi-driver || echo "CSI driver pods not found"
         kubectl get pods -n kube-system -l app=secrets-store-provider-azure || echo "Azure provider pods not found"
 
-    # CRITICAL FIX: Update SecretProviderClass with correct identity and deploy
-    - name: 🔧 Configure SecretProviderClass and Deploy
-      run: |
-        echo "🔧 Configuring SecretProviderClass with correct identity..."
-        
-        # Create namespace
-        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
-        
-        cd kubernetes
-        
-        # Update the SecretProviderClass with the correct values BEFORE applying
-        echo "📝 Updating SecretProviderClass configuration..."
-        sed -i "s/userAssignedIdentityClientID: \"\"/userAssignedIdentityClientID: \"$AKS_ADDON_IDENTITY_CLIENT_ID\"/g" 15-keyvault-secret-provider.yaml
-        sed -i "s/tenantId: \"\"/tenantId: \"$TENANT_ID\"/g" 15-keyvault-secret-provider.yaml
-        sed -i "s/keyvaultName: \"easyshop-kv\"/keyvaultName: \"$KEY_VAULT_NAME\"/g" 15-keyvault-secret-provider.yaml
-        
-        # Update image
-        echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
-        kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
-        
-        # Build manifests
-        echo "🔍 Building manifests..."
-        kustomize build . > /tmp/manifests.yaml
-        
-        RESOURCE_COUNT=$(grep -c "^kind:" /tmp/manifests.yaml)
-        echo "✅ Generated $RESOURCE_COUNT resources"
-        
-        # Apply all manifests
-        echo "📦 Applying all resources..."
-        kubectl apply -f /tmp/manifests.yaml
-        
-        # Wait for SecretProviderClass to be ready
-        echo "⏳ Waiting for SecretProviderClass to be ready..."
-        kubectl wait --for=condition=Ready secretproviderclass/easyshop-keyvault-secrets -n easyshop --timeout=60s || echo "SecretProviderClass may not have Ready condition"
-        
-        # Verify SecretProviderClass configuration
-        echo "🔍 Verifying SecretProviderClass configuration..."
-        kubectl get secretproviderclass easyshop-keyvault-secrets -n easyshop -o yaml
-        
-        echo "✅ SecretProviderClass configured successfully!"
-
-
-    # Add this step RIGHT BEFORE your "Blue-Green Deployment" step
     # STEP 1: Configure SecretProviderClass FIRST
     - name: 🔧 Configure SecretProviderClass BEFORE Deployment
       run: |
@@ -219,38 +176,45 @@ jobs:
           --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv')].name" \
           -o tsv | head -1)
         
-        # Enable addon if not enabled and get identity
-        ADDON_ENABLED=$(az aks show \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --name ${{ env.AKS_CLUSTER_NAME }} \
-          --query addonProfiles.azureKeyvaultSecretsProvider.enabled \
-          -o tsv 2>/dev/null || echo "false")
-        
-        if [[ "$ADDON_ENABLED" != "true" ]]; then
-          echo "🚨 Enabling Key Vault addon..."
-          az aks addon enable \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --name ${{ env.AKS_CLUSTER_NAME }} \
-            --addon azure-keyvault-secrets-provider
-          sleep 60
-        fi
-        
+        # Get addon identity (fixed the query path)
         AKS_ADDON_IDENTITY_CLIENT_ID=$(az aks show \
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --name ${{ env.AKS_CLUSTER_NAME }} \
           --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId \
           -o tsv)
         
+        # FIXED: Get object ID with correct query path
+        ADDON_IDENTITY_OBJECT_ID=$(az aks show \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --query addonProfiles.azureKeyvaultSecretsProvider.identity.objectId \
+          -o tsv)
+        
         echo "✅ Values retrieved:"
         echo "  TENANT_ID: $TENANT_ID"
         echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
         echo "  AKS_ADDON_IDENTITY_CLIENT_ID: $AKS_ADDON_IDENTITY_CLIENT_ID"
+        echo "  ADDON_IDENTITY_OBJECT_ID: $ADDON_IDENTITY_OBJECT_ID"
         
-        # Validate values
-        if [[ -z "$TENANT_ID" || -z "$KEY_VAULT_NAME" || -z "$AKS_ADDON_IDENTITY_CLIENT_ID" ]]; then
+        # Validate ALL values are present
+        if [[ -z "$TENANT_ID" || -z "$KEY_VAULT_NAME" || -z "$AKS_ADDON_IDENTITY_CLIENT_ID" || -z "$ADDON_IDENTITY_OBJECT_ID" ]]; then
           echo "❌ Missing required values!"
+          echo "  TENANT_ID: ${TENANT_ID:-MISSING}"
+          echo "  KEY_VAULT_NAME: ${KEY_VAULT_NAME:-MISSING}"
+          echo "  AKS_ADDON_IDENTITY_CLIENT_ID: ${AKS_ADDON_IDENTITY_CLIENT_ID:-MISSING}"
+          echo "  ADDON_IDENTITY_OBJECT_ID: ${ADDON_IDENTITY_OBJECT_ID:-MISSING}"
           exit 1
         fi
+        
+        # Set Key Vault access policy FIRST
+        echo "🔐 Setting Key Vault access policy..."
+        az keyvault set-policy \
+          --name "$KEY_VAULT_NAME" \
+          --object-id "$ADDON_IDENTITY_OBJECT_ID" \
+          --secret-permissions get list \
+          --output table
+        
+        echo "✅ Key Vault access policy configured!"
         
         # Update the SecretProviderClass file BEFORE building manifests
         cd kubernetes
@@ -275,23 +239,7 @@ jobs:
           exit 1
         fi
         
-        echo "✅ SecretProviderClass configured successfully!"
-        
-        # Set Key Vault access policy
-        ADDON_IDENTITY_OBJECT_ID=$(az aks show \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --name ${{ env.AKS_CLUSTER_NAME }} \
-          --query addonProjects.azureKeyvaultSecretsProvider.identity.objectId \
-          -o tsv)
-        
-        echo "🔐 Setting Key Vault access policy..."
-        az keyvault set-policy \
-          --name $KEY_VAULT_NAME \
-          --object-id $ADDON_IDENTITY_OBJECT_ID \
-          --secret-permissions get list \
-          --output none
-        
-        echo "✅ Key Vault access policy configured!"
+        echo "✅ SecretProviderClass file updated successfully!"
 
     # STEP 2: NOW do the deployment with properly configured SecretProviderClass
     - name: 🚀 Blue-Green Deployment with Fixed Configuration
