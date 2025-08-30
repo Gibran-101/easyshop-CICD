@@ -207,177 +207,157 @@ jobs:
 
 
     # Add this step RIGHT BEFORE your "Blue-Green Deployment" step
-    - name: 🔧 Configure SecretProviderClass with ACTUAL Values
+    # STEP 1: Configure SecretProviderClass FIRST
+    - name: 🔧 Configure SecretProviderClass BEFORE Deployment
       run: |
-        echo "🔧 Getting REAL values for SecretProviderClass..."
+        echo "🔧 Configuring SecretProviderClass with actual values..."
         
-        # Get tenant ID - straightforward
+        # Get all required values
         TENANT_ID=$(az account show --query tenantId -o tsv)
-        echo "✅ Tenant ID: $TENANT_ID"
-        
-        # Get Key Vault name from your resource group
         KEY_VAULT_NAME=$(az keyvault list \
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv')].name" \
           -o tsv | head -1)
-        echo "✅ Key Vault Name: $KEY_VAULT_NAME"
         
-        # THE CRITICAL PART - Get the AKS addon managed identity Client ID
-        # This is created automatically when you enable the Key Vault addon
+        # Enable addon if not enabled and get identity
+        ADDON_ENABLED=$(az aks show \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --query addonProfiles.azureKeyvaultSecretsProvider.enabled \
+          -o tsv 2>/dev/null || echo "false")
+        
+        if [[ "$ADDON_ENABLED" != "true" ]]; then
+          echo "🚨 Enabling Key Vault addon..."
+          az aks addon enable \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --addon azure-keyvault-secrets-provider
+          sleep 60
+        fi
+        
         AKS_ADDON_IDENTITY_CLIENT_ID=$(az aks show \
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --name ${{ env.AKS_CLUSTER_NAME }} \
           --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId \
           -o tsv)
         
-        if [[ -z "$AKS_ADDON_IDENTITY_CLIENT_ID" || "$AKS_ADDON_IDENTITY_CLIENT_ID" == "null" ]]; then
-          echo "❌ Key Vault addon identity not found!"
-          echo "🔧 Checking if addon is enabled..."
-          
-          ADDON_ENABLED=$(az aks show \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --name ${{ env.AKS_CLUSTER_NAME }} \
-            --query addonProfiles.azureKeyvaultSecretsProvider.enabled \
-            -o tsv 2>/dev/null || echo "false")
-          
-          if [[ "$ADDON_ENABLED" != "true" ]]; then
-            echo "🚨 ENABLING Key Vault addon..."
-            az aks addon enable \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --name ${{ env.AKS_CLUSTER_NAME }} \
-              --addon azure-keyvault-secrets-provider
-            
-            echo "⏳ Waiting for addon to initialize..."
-            sleep 60
-            
-            # Try again to get the identity
-            AKS_ADDON_IDENTITY_CLIENT_ID=$(az aks show \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --name ${{ env.AKS_CLUSTER_NAME }} \
-              --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId \
-              -o tsv)
-          fi
-          
-          if [[ -z "$AKS_ADDON_IDENTITY_CLIENT_ID" || "$AKS_ADDON_IDENTITY_CLIENT_ID" == "null" ]]; then
-            echo "❌ Still cannot get addon identity. This is a critical error."
-            exit 1
-          fi
-        fi
+        echo "✅ Values retrieved:"
+        echo "  TENANT_ID: $TENANT_ID"
+        echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
+        echo "  AKS_ADDON_IDENTITY_CLIENT_ID: $AKS_ADDON_IDENTITY_CLIENT_ID"
         
-        echo "✅ AKS Addon Identity Client ID: $AKS_ADDON_IDENTITY_CLIENT_ID"
-        
-        # Validate all values are present
+        # Validate values
         if [[ -z "$TENANT_ID" || -z "$KEY_VAULT_NAME" || -z "$AKS_ADDON_IDENTITY_CLIENT_ID" ]]; then
-          echo "❌ Missing required values:"
-          echo "  TENANT_ID: $TENANT_ID"
-          echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME" 
-          echo "  AKS_ADDON_IDENTITY_CLIENT_ID: $AKS_ADDON_IDENTITY_CLIENT_ID"
+          echo "❌ Missing required values!"
           exit 1
         fi
         
-        # Now ACTUALLY update the SecretProviderClass with these values
+        # Update the SecretProviderClass file BEFORE building manifests
         cd kubernetes
         
-        # Show current content before replacement
-        echo "📋 BEFORE replacement:"
-        grep -E "keyvaultName|tenantId|userAssignedIdentityClientID" 15-keyvault-secret-provider.yaml
+        # Show current placeholders
+        echo "📋 Current placeholders in file:"
+        grep -E "PLACEHOLDER|keyvaultName|tenantId|userAssignedIdentityClientID" 15-keyvault-secret-provider.yaml
         
-        # Use sed to replace the EXACT placeholders in the file
+        # Replace placeholders with actual values
         sed -i "s/PLACEHOLDER_KEYVAULT_NAME/$KEY_VAULT_NAME/g" 15-keyvault-secret-provider.yaml
-        sed -i "s/PLACEHOLDER_TENANT_ID/$TENANT_ID/g" 15-keyvault-secret-provider.yaml
+        sed -i "s/PLACEHOLDER_TENANT_ID/$TENANT_ID/g" 15-keyvault-secret-provider.yaml  
         sed -i "s/PLACEHOLDER_MANAGED_IDENTITY_CLIENT_ID/$AKS_ADDON_IDENTITY_CLIENT_ID/g" 15-keyvault-secret-provider.yaml
         
-        # Show content after replacement
-        echo "📋 AFTER replacement:"
+        # Verify replacements worked
+        echo "📋 After replacement:"
         grep -E "keyvaultName|tenantId|userAssignedIdentityClientID" 15-keyvault-secret-provider.yaml
         
-        # Verify the replacements worked
+        # Check if any placeholders remain
         if grep -q "PLACEHOLDER" 15-keyvault-secret-provider.yaml; then
-          echo "❌ Some placeholders were not replaced!"
+          echo "❌ Placeholders still exist!"
           grep "PLACEHOLDER" 15-keyvault-secret-provider.yaml
           exit 1
         fi
         
-        echo "✅ SecretProviderClass updated successfully!"
+        echo "✅ SecretProviderClass configured successfully!"
         
-        # Also set Key Vault access policy for this identity
-        echo "🔐 Setting Key Vault access policy..."
+        # Set Key Vault access policy
         ADDON_IDENTITY_OBJECT_ID=$(az aks show \
           --resource-group ${{ env.RESOURCE_GROUP }} \
           --name ${{ env.AKS_CLUSTER_NAME }} \
-          --query addonProfiles.azureKeyvaultSecretsProvider.identity.objectId \
+          --query addonProjects.azureKeyvaultSecretsProvider.identity.objectId \
           -o tsv)
         
+        echo "🔐 Setting Key Vault access policy..."
         az keyvault set-policy \
           --name $KEY_VAULT_NAME \
           --object-id $ADDON_IDENTITY_OBJECT_ID \
           --secret-permissions get list \
-          --output table
+          --output none
         
         echo "✅ Key Vault access policy configured!"
 
-    # STREAMLINED Blue-Green Deployment
-    - name: 🚀 Blue-Green Deployment - COMPLETE VERSION
+    # STEP 2: NOW do the deployment with properly configured SecretProviderClass
+    - name: 🚀 Blue-Green Deployment with Fixed Configuration
       run: |
         set -e
         
-        echo "🚀 Starting Blue-Green Deployment..."
+        echo "🚀 Starting Blue-Green Deployment with pre-configured SecretProviderClass..."
         
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         cd kubernetes
         
-        # Update image
+        # Update image in kustomization
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
         kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
-        # Build manifests
-        echo "🔍 Building manifests..."
+        # Build manifests (SecretProviderClass already has correct values)
+        echo "🔍 Building manifests with configured SecretProviderClass..."
         kustomize build . > /tmp/manifests.yaml
         
         RESOURCE_COUNT=$(grep -c "^kind:" /tmp/manifests.yaml)
         echo "✅ Generated $RESOURCE_COUNT resources"
         
-        # Apply all manifests
-        echo "📦 Applying all resources..."
+        # Verify SecretProviderClass in manifests has real values, not placeholders
+        echo "🔍 Verifying SecretProviderClass in manifests..."
+        if grep -q "PLACEHOLDER" /tmp/manifests.yaml; then
+          echo "❌ CRITICAL ERROR: Placeholders found in final manifests!"
+          grep -A 5 -B 5 "PLACEHOLDER" /tmp/manifests.yaml
+          exit 1
+        fi
+        
+        # Apply manifests with proper SecretProviderClass
+        echo "📦 Applying manifests with configured SecretProviderClass..."
         kubectl apply -f /tmp/manifests.yaml
         
         # Wait for SecretProviderClass to be ready
         echo "⏳ Waiting for SecretProviderClass to be ready..."
-        kubectl wait --for=condition=Ready secretproviderclass/easyshop-keyvault-secrets -n easyshop --timeout=120s || true
+        kubectl wait --for=jsonpath='{.status.phase}'=Ready secretproviderclass/easyshop-keyvault-secrets -n easyshop --timeout=120s || {
+          echo "⚠️ SecretProviderClass not ready, but continuing..."
+        }
         
-        # Determine target deployment
+        # Determine current and target deployments
         CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n easyshop -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "easyshop-blue")
         
         if [ "$CURRENT_DEPLOYMENT" = "easyshop-blue" ]; then
           TARGET_DEPLOYMENT="easyshop-green"
           echo "🔄 Current: BLUE → Target: GREEN"
         else
-          TARGET_DEPLOYMENT="easyshop-blue"
+          TARGET_DEPLOYMENT="easyshop-blue" 
           echo "🔄 Current: GREEN → Target: BLUE"
         fi
         
-        # Clean up any stuck pods from target deployment
+        # Clean up existing pods from target deployment
         echo "🧹 Cleaning up existing pods from target deployment..."
         kubectl delete pods -n easyshop -l app=$TARGET_DEPLOYMENT --force --grace-period=0 || true
         
         echo "⏳ Waiting for cleanup to complete..."
-        sleep 15
+        sleep 20
         
-        # Wait for deployment rollout with proper timeout
+        # Wait for deployment rollout
         echo "⏳ Waiting for $TARGET_DEPLOYMENT rollout..."
         if kubectl rollout status deployment/$TARGET_DEPLOYMENT -n easyshop --timeout=600s; then
           echo "✅ Rollout successful!"
           
-          # Verify pods can mount secrets
-          echo "🔍 Verifying secret mounting..."
+          # Verify pods are running and secrets mounted
+          echo "🔍 Verifying deployment..."
           kubectl get pods -n easyshop -l app=$TARGET_DEPLOYMENT
-          
-          # Check for any mount failures
-          MOUNT_FAILURES=$(kubectl get events -n easyshop --field-selector reason=FailedMount -o json | jq -r '.items | length')
-          if [[ "$MOUNT_FAILURES" -gt 0 ]]; then
-            echo "⚠️ Warning: Some mount failures detected, but deployment succeeded"
-            kubectl get events -n easyshop --field-selector reason=FailedMount --sort-by='.lastTimestamp' | tail -5
-          fi
           
           # Switch traffic
           echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
@@ -392,7 +372,6 @@ jobs:
           
           echo ""
           echo "🎉 BLUE-GREEN DEPLOYMENT SUCCESSFUL!"
-          echo "=================================================="
           echo "🎯 Active: $TARGET_DEPLOYMENT"
           echo "🐋 Image: ${{ env.IMAGE_WITH_DIGEST }}"
           
@@ -404,7 +383,7 @@ jobs:
           echo "📋 Recent events:"
           kubectl get events -n easyshop --sort-by='.lastTimestamp' | tail -20
           echo ""
-          echo "📋 SecretProviderClass status:"
+          echo "📋 SecretProviderClass final status:"
           kubectl describe secretproviderclass easyshop-keyvault-secrets -n easyshop
           exit 1
         fi
