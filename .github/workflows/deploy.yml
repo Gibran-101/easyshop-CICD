@@ -226,7 +226,7 @@ jobs:
         # Replace placeholders with actual values
         sed -i "s/PLACEHOLDER_KEYVAULT_NAME/$KEY_VAULT_NAME/g" 15-keyvault-secret-provider.yaml
         sed -i "s/PLACEHOLDER_TENANT_ID/$TENANT_ID/g" 15-keyvault-secret-provider.yaml  
-        # sed -i "s/PLACEHOLDER_MANAGED_IDENTITY_CLIENT_ID/$AKS_ADDON_IDENTITY_CLIENT_ID/g" 15-keyvault-secret-provider.yaml
+
         
         # Verify replacements worked
         echo "📋 After replacement:"
