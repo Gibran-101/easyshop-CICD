@@ -81,3 +81,20 @@ output "acr_login_server" {
   description = "ACR login server URL"
   value       = module.acr.acr_login_server
 }
+
+output "key_vault_addon_client_id" {
+  description = "Client ID of the Key Vault CSI driver addon identity"
+  value       = module.aks.key_vault_addon_identity.client_id
+  sensitive   = false
+}
+
+output "key_vault_addon_object_id" {
+  description = "Object ID of the Key Vault CSI driver addon identity"
+  value       = module.aks.key_vault_addon_identity.object_id
+  sensitive   = false
+}
+
+output "addon_identity_ready" {
+  description = "Indicates if the addon identity is ready for use"
+  value       = module.aks.addon_identity_ready
+}

@@ -107,13 +107,13 @@ module "aks" {
   acr_id              = module.acr.acr_id
   key_vault_id        = module.app_keyvault.key_vault_id
 
-  # Fixed: Only pass values when needed
+  # Node configuration
   node_count          = 2
   vm_size             = "Standard_B2s"
   enable_auto_scaling = false
-  # Don't pass min_count and max_count when autoscaling is disabled
-  # min_count         = null  # Remove this line
-  # max_count         = null  # Remove this line
+  
+  # ADD this new parameter
+  key_vault_secret_rotation_interval = var.key_vault_secret_rotation_interval
 
   tags       = var.tags
   depends_on = [module.networking, module.app_keyvault]

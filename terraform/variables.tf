@@ -174,3 +174,13 @@ variable "admin_object_id" {
   type        = string
   default     = ""
 }
+
+variable "key_vault_secret_rotation_interval" {
+  description = "Interval for Key Vault secret rotation in the CSI driver"
+  type        = string
+  default     = "2m"
+  validation {
+    condition     = can(regex("^[0-9]+[mh]$", var.key_vault_secret_rotation_interval))
+    error_message = "Secret rotation interval must be in format like '2m' or '1h'."
+  }
+}

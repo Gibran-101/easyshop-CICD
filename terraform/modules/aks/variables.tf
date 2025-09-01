@@ -90,3 +90,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# Add this to the existing variables in terraform/modules/aks/variables.tf:
+
+variable "key_vault_secret_rotation_interval" {
+  description = "Interval for Key Vault secret rotation in the CSI driver"
+  type        = string
+  default     = "2m"  # 2 minutes for faster secret updates
+  validation {
+    condition     = can(regex("^[0-9]+[mh]$", var.key_vault_secret_rotation_interval))
+    error_message = "Secret rotation interval must be in format like '2m' or '1h'."
+  }
+}

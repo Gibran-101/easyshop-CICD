@@ -102,6 +102,8 @@ jobs:
           path: ~/.terraform.d/plugin-cache
           retention-days: 5
   
+  # Update the apply job in .github/workflows/infra.yml:
+
   apply:
     name: 'Terraform Apply'
     runs-on: ubuntu-latest
@@ -112,109 +114,25 @@ jobs:
         working-directory: terraform
     outputs:
       key_vault_name: ${{ steps.export.outputs.key_vault_name }}
-      managed_identity_client_id: ${{ steps.export.outputs.managed_identity_client_id }}
+      key_vault_addon_client_id: ${{ steps.export.outputs.key_vault_addon_client_id }}
+      key_vault_addon_object_id: ${{ steps.export.outputs.key_vault_addon_object_id }}
       tenant_id: ${{ steps.export.outputs.tenant_id }}
+      addon_identity_ready: ${{ steps.export.outputs.addon_identity_ready }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: terraform-config
-          path: terraform/
-      - uses: actions/download-artifact@v4
-        with:
-          name: terraform-cache
-          path: ~/.terraform.d/plugin-cache
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-      - name: Configure cache & apply
-        run: |
-          echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
-          terraform init -backend-config="backend.conf" -reconfigure
-          
-      - name: 🔍 Pre-Apply Validation
-        run: |
-          echo "🔍 Validating Azure resources before apply..."
-          
-          # Check if resource group exists and its status
-          if az group exists --name ${{ secrets.TF_PROJECT_NAME }}-rg; then
-            RG_STATUS=$(az group show --name ${{ secrets.TF_PROJECT_NAME }}-rg --query "properties.provisioningState" -o tsv)
-            echo "📋 Resource group exists with status: $RG_STATUS"
-            
-            if [[ "$RG_STATUS" == "Deleting" ]]; then
-              echo "❌ Resource group is being deleted. Cannot proceed with apply."
-              echo "⏳ Please wait for deletion to complete and re-run the workflow."
-              exit 1
-            fi
-          else
-            echo "✅ Resource group does not exist - ready for creation"
-          fi
-          
-          # Validate Terraform configuration
-          terraform validate
-          echo "✅ Terraform configuration is valid"
-      - uses: actions/download-artifact@v4
-        with:
-          name: terraform-plan
-          path: terraform/
+      # ... existing steps ...
+      
       - name: Terraform Apply & Export
         id: export
         run: |
-          # Check if resource group is being deleted and wait if necessary
-          echo "🔍 Checking resource group status..."
-          RG_STATUS=$(az group show --name ${{ secrets.TF_PROJECT_NAME }}-rg --query "properties.provisioningState" -o tsv 2>/dev/null || echo "NotFound")
-          echo "📋 Resource group status: $RG_STATUS"
+          # ... existing apply logic ...
           
-          if [[ "$RG_STATUS" == "Deleting" ]]; then
-            echo "⚠️ Resource group is being deleted. Waiting for completion..."
-            
-            # Wait for deletion to complete (max 10 minutes)
-            for i in {1..60}; do
-              sleep 10
-              RG_EXISTS=$(az group exists --name ${{ secrets.TF_PROJECT_NAME }}-rg)
-              if [[ "$RG_EXISTS" == "false" ]]; then
-                echo "✅ Resource group deletion completed"
-                break
-              fi
-              echo "⏳ Still waiting for deletion... ($i/60)"
-            done
-            
-            # Refresh Terraform state after deletion
-            echo "🔄 Refreshing Terraform state..."
-            terraform refresh -var-file="terraform.tfvars" || echo "State refresh completed"
-          fi
-          
-          # Apply with retry logic for transient Azure issues
-          echo "🚀 Applying Terraform configuration..."
-          RETRY_COUNT=0
-          MAX_RETRIES=3
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if terraform apply tfplan -no-color; then
-              echo "✅ Terraform apply successful!"
-              break
-            else
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-                echo "⚠️ Terraform apply failed. Retrying in 30 seconds... (Attempt $RETRY_COUNT/$MAX_RETRIES)"
-                sleep 30
-                
-                # Refresh state before retry
-                terraform refresh -var-file="terraform.tfvars" || echo "State refresh completed"
-              else
-                echo "❌ Terraform apply failed after $MAX_RETRIES attempts"
-                exit 1
-              fi
-            fi
-          done
-          
-          # Export outputs
+          # Export outputs - UPDATED to include addon identity
           echo "📤 Exporting Terraform outputs..."
           echo "key_vault_name=$(terraform output -raw key_vault_name 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
-          echo "managed_identity_client_id=$(terraform output -raw managed_identity_client_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
+          echo "key_vault_addon_client_id=$(terraform output -raw key_vault_addon_client_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
+          echo "key_vault_addon_object_id=$(terraform output -raw key_vault_addon_object_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
           echo "tenant_id=$(terraform output -raw tenant_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
+          echo "addon_identity_ready=$(terraform output -raw addon_identity_ready 2>/dev/null || echo 'false')" >> $GITHUB_OUTPUT
 
   update-k8s-manifests:
     name: 'Update Kubernetes Manifests'
@@ -227,13 +145,48 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Update & commit manifests
         run: |
-          sed -i 's/${MANAGED_IDENTITY_CLIENT_ID}/${{ needs.apply.outputs.managed_identity_client_id }}/g' kubernetes/15-keyvault-secret-provider.yaml
-          sed -i 's/${TENANT_ID}/${{ needs.apply.outputs.tenant_id }}/g' kubernetes/15-keyvault-secret-provider.yaml
+          # Update SecretProviderClass with addon identity from Terraform
+          sed -i "s/PLACEHOLDER_CLIENT_ID/${{ needs.apply.outputs.key_vault_addon_client_id }}/g" kubernetes/15-keyvault-secret-provider.yaml
+          sed -i "s/PLACEHOLDER_TENANT_ID/${{ needs.apply.outputs.tenant_id }}/g" kubernetes/15-keyvault-secret-provider.yaml
+          sed -i "s/PLACEHOLDER_KEYVAULT_NAME/${{ needs.apply.outputs.key_vault_name }}/g" kubernetes/15-keyvault-secret-provider.yaml
+          
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add kubernetes/15-keyvault-secret-provider.yaml
           git diff --staged --quiet || git commit -m "Update SecretProviderClass with Terraform outputs [skip ci]"
           git push
+
+  trigger-deploy:
+    name: 'Trigger Application Deployment'
+    runs-on: ubuntu-latest
+    needs: [apply, update-k8s-manifests, deploy-argocd]
+    if: success()
+    steps:
+      - name: Check addon identity readiness
+        run: |
+          if [[ "${{ needs.apply.outputs.addon_identity_ready }}" != "true" ]]; then
+            echo "⚠️ Warning: Addon identity may not be fully propagated yet"
+            echo "Waiting additional 30 seconds for safety..."
+            sleep 30
+          else
+            echo "✅ Addon identity is ready"
+          fi
+      
+      - uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          event-type: deploy-applications
+          client-payload: |
+            {
+              "ref": "${{ github.ref }}",
+              "sha": "${{ github.sha }}",
+              "key_vault_name": "${{ needs.apply.outputs.key_vault_name }}",
+              "key_vault_addon_client_id": "${{ needs.apply.outputs.key_vault_addon_client_id }}",
+              "key_vault_addon_object_id": "${{ needs.apply.outputs.key_vault_addon_object_id }}",
+              "tenant_id": "${{ needs.apply.outputs.tenant_id }}",
+              "addon_identity_ready": "${{ needs.apply.outputs.addon_identity_ready }}"
+            }
 
   deploy-argocd:
     name: 'Deploy ArgoCD to AKS'

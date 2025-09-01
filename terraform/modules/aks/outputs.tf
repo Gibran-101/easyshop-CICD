@@ -49,9 +49,14 @@ output "node_resource_group" {
 output "key_vault_addon_identity" {
   description = "The managed identity created by the Key Vault addon"
   value = {
-    client_id   = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].client_id
-    object_id   = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].object_id
-    user_assigned_identity_id = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].user_assigned_identity_id
+    client_id   = try(azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].client_id, "")
+    object_id   = try(azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].object_id, "")
+    resource_id = try(azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].user_assigned_identity_id, "")
   }
-  sensitive = false
+}
+
+# ADD this new output for tracking propagation status:
+output "addon_identity_ready" {
+  description = "Indicates if the addon identity is ready after propagation delay"
+  value       = time_sleep.wait_for_addon_identity.id != "" ? true : false
 }
