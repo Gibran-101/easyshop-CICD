@@ -100,137 +100,75 @@ jobs:
         sudo mv kustomize /usr/local/bin/
 
     # OPTIMIZED: Single step for Key Vault setup with proper error handling
+    # In .github/workflows/deploy.yml - Replace the entire Configure Key Vault Access step
+
     - name: 🔧 Configure Key Vault Access and SecretProviderClass
       run: |
         set -e
         echo "🔧 Configuring Key Vault CSI Driver..."
         
-        # Step 1: Get all required information
-        echo "📊 Gathering cluster and Key Vault information..."
+        # Get configuration from repository dispatch payload OR from Azure
+        if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+          echo "📦 Using values from infrastructure workflow..."
+          KEY_VAULT_NAME="${{ github.event.client_payload.key_vault_name }}"
+          ADDON_CLIENT_ID="${{ github.event.client_payload.key_vault_addon_client_id }}"
+          ADDON_OBJECT_ID="${{ github.event.client_payload.key_vault_addon_object_id }}"
+          TENANT_ID="${{ github.event.client_payload.tenant_id }}"
+        else
+          echo "🔍 Fetching values from Azure..."
+          TENANT_ID=$(az account show --query tenantId -o tsv)
+          
+          # Get Key Vault - handle the timestamp suffix
+          KEY_VAULT_NAME=$(az keyvault list \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv')].name | [0]" \
+            -o tsv)
+          
+          # Get addon identity
+          ADDON_CLIENT_ID=$(az aks show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --query "addonProfiles.azureKeyvaultSecretsProvider.identity.clientId" \
+            -o tsv)
+          
+          ADDON_OBJECT_ID=$(az aks show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --query "addonProfiles.azureKeyvaultSecretsProvider.identity.objectId" \
+            -o tsv)
+        fi
         
-        TENANT_ID=$(az account show --query tenantId -o tsv)
-        KEY_VAULT_NAME=$(az keyvault list \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv')].name" \
-          -o tsv | head -1)
+        # Validate we have all values
+        echo "📋 Configuration:"
+        echo "  KEY_VAULT_NAME: ${KEY_VAULT_NAME}"
+        echo "  ADDON_CLIENT_ID: ${ADDON_CLIENT_ID}"
+        echo "  ADDON_OBJECT_ID: ${ADDON_OBJECT_ID}"
+        echo "  TENANT_ID: ${TENANT_ID}"
         
-        # Check if addon is already enabled (it should be from Terraform)
-        ADDON_ENABLED=$(az aks show \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --name ${{ env.AKS_CLUSTER_NAME }} \
-          --query "addonProfiles.azureKeyvaultSecretsProvider.enabled" \
-          -o tsv)
-        
-        if [[ "$ADDON_ENABLED" != "true" ]]; then
-          echo "❌ Key Vault CSI addon is not enabled! This should be enabled by Terraform."
+        if [[ -z "$KEY_VAULT_NAME" || "$KEY_VAULT_NAME" == "null" || "$KEY_VAULT_NAME" == "not-created" ]]; then
+          echo "❌ Key Vault name is invalid or empty!"
+          echo "Checking what Key Vaults exist..."
+          az keyvault list --resource-group ${{ env.RESOURCE_GROUP }} --query "[].name" -o table
           exit 1
         fi
         
-        echo "✅ Key Vault CSI addon is enabled"
-        
-        # Get the addon identity details
-        ADDON_CLIENT_ID=$(az aks show \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --name ${{ env.AKS_CLUSTER_NAME }} \
-          --query "addonProfiles.azureKeyvaultSecretsProvider.identity.clientId" \
-          -o tsv)
-        
-        ADDON_OBJECT_ID=$(az aks show \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --name ${{ env.AKS_CLUSTER_NAME }} \
-          --query "addonProfiles.azureKeyvaultSecretsProvider.identity.objectId" \
-          -o tsv)
-        
-        ADDON_RESOURCE_ID=$(az aks show \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --name ${{ env.AKS_CLUSTER_NAME }} \
-          --query "addonProfiles.azureKeyvaultSecretsProvider.identity.resourceId" \
-          -o tsv)
-        
-        echo "📋 Configuration Details:"
-        echo "  Tenant ID: $TENANT_ID"
-        echo "  Key Vault: $KEY_VAULT_NAME"
-        echo "  Addon Client ID: $ADDON_CLIENT_ID"
-        echo "  Addon Object ID: $ADDON_OBJECT_ID"
-        echo "  Addon Resource ID: $ADDON_RESOURCE_ID"
-        
-        # Step 2: Ensure Key Vault access policy (idempotent)
-        echo "🔐 Ensuring Key Vault access policy..."
-        
-        # Check if policy already exists
-        EXISTING_POLICY=$(az keyvault show \
+        # Set Key Vault access policy
+        echo "🔐 Setting Key Vault access policy..."
+        az keyvault set-policy \
           --name "$KEY_VAULT_NAME" \
-          --query "properties.accessPolicies[?objectId=='$ADDON_OBJECT_ID'].objectId" \
-          -o tsv)
+          --object-id "$ADDON_OBJECT_ID" \
+          --secret-permissions get list \
+          --output none || echo "Policy may already exist"
         
-        if [[ -z "$EXISTING_POLICY" ]]; then
-          echo "📝 Setting new Key Vault access policy..."
-          az keyvault set-policy \
-            --name "$KEY_VAULT_NAME" \
-            --object-id "$ADDON_OBJECT_ID" \
-            --secret-permissions get list \
-            --output table
-        else
-          echo "✅ Key Vault access policy already exists"
-        fi
-        
-        # Step 3: Wait for Azure AD propagation
-        echo "⏳ Waiting for Azure AD propagation (30 seconds)..."
-        sleep 30
-        
-        # Step 4: Update SecretProviderClass YAML
-        echo "📝 Updating SecretProviderClass configuration..."
-        cd kubernetes
-        
-        # Create a backup
-        cp 15-keyvault-secret-provider.yaml 15-keyvault-secret-provider.yaml.bak
-        
-        # Replace placeholders
-        sed -i "s/PLACEHOLDER_KEYVAULT_NAME/$KEY_VAULT_NAME/g" 15-keyvault-secret-provider.yaml
-        sed -i "s/PLACEHOLDER_TENANT_ID/$TENANT_ID/g" 15-keyvault-secret-provider.yaml
-        sed -i "s/PLACEHOLDER_CLIENT_ID/$ADDON_CLIENT_ID/g" 15-keyvault-secret-provider.yaml
-        
-        # Verify no placeholders remain
-        if grep -q "PLACEHOLDER" 15-keyvault-secret-provider.yaml; then
-          echo "❌ Failed to replace all placeholders!"
-          grep "PLACEHOLDER" 15-keyvault-secret-provider.yaml
-          exit 1
-        fi
-        
-        echo "✅ SecretProviderClass configuration updated"
-        
-        # Step 5: Verify CSI driver components
-        echo "🔍 Verifying CSI driver components..."
-        
-        # Check CSI driver pods
-        CSI_DRIVER_READY=$(kubectl get pods -n kube-system \
-          -l app=secrets-store-csi-driver \
-          -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | \
-          grep -o "True" | wc -l)
-        
-        CSI_PROVIDER_READY=$(kubectl get pods -n kube-system \
-          -l app=secrets-store-provider-azure \
-          -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | \
-          grep -o "True" | wc -l)
-        
-        if [[ $CSI_DRIVER_READY -lt 2 ]] || [[ $CSI_PROVIDER_READY -lt 2 ]]; then
-          echo "⚠️ CSI driver components not fully ready. Waiting..."
-          kubectl wait --for=condition=ready pod \
-            -l app=secrets-store-csi-driver \
-            -n kube-system \
-            --timeout=120s || true
-          kubectl wait --for=condition=ready pod \
-            -l app=secrets-store-provider-azure \
-            -n kube-system \
-            --timeout=120s || true
-        else
-          echo "✅ All CSI driver components are ready"
-        fi
-        
-        # Store values for next steps
-        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
+        # Store for later use
         echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
+        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
+        echo "ADDON_OBJECT_ID=$ADDON_OBJECT_ID" >> $GITHUB_ENV
         echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+        
+        # Wait for propagation
+        echo "⏳ Waiting for Azure AD propagation..."
+        sleep 30
 
     # OPTIMIZED: Simplified deployment with better error handling
     - name: 🚀 Blue-Green Deployment
@@ -238,28 +176,69 @@ jobs:
         set -e
         echo "🚀 Starting Blue-Green Deployment..."
         
-        # Create namespace if it doesn't exist
+        # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
         
         cd kubernetes
+        
+        # CRITICAL: Update the SecretProviderClass file BEFORE kustomize
+        echo "📝 Updating SecretProviderClass with actual values..."
+        
+        # Use environment variables set in previous step
+        if [[ -n "$KEY_VAULT_NAME" && -n "$TENANT_ID" && -n "$ADDON_CLIENT_ID" ]]; then
+          echo "Using values from environment:"
+          echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
+          echo "  TENANT_ID: $TENANT_ID"
+          echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID"
+          
+          # Update the file
+          sed -i "s|PLACEHOLDER_KEYVAULT_NAME|${KEY_VAULT_NAME}|g" 15-keyvault-secret-provider.yaml
+          sed -i "s|PLACEHOLDER_TENANT_ID|${TENANT_ID}|g" 15-keyvault-secret-provider.yaml
+          sed -i "s|PLACEHOLDER_CLIENT_ID|${ADDON_CLIENT_ID}|g" 15-keyvault-secret-provider.yaml
+          
+          # Verify the substitution worked
+          echo "📋 Verifying SecretProviderClass configuration:"
+          if grep -q "PLACEHOLDER" 15-keyvault-secret-provider.yaml; then
+            echo "❌ Placeholders still exist!"
+            cat 15-keyvault-secret-provider.yaml
+            exit 1
+          fi
+          
+          # Show the actual values
+          echo "Actual values in SecretProviderClass:"
+          grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" 15-keyvault-secret-provider.yaml
+        else
+          echo "❌ Missing environment variables!"
+          echo "KEY_VAULT_NAME: ${KEY_VAULT_NAME:-MISSING}"
+          echo "TENANT_ID: ${TENANT_ID:-MISSING}"
+          echo "ADDON_CLIENT_ID: ${ADDON_CLIENT_ID:-MISSING}"
+          exit 1
+        fi
         
         # Update image reference
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
         kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
-        # Build and validate manifests
+        # Build manifests
         echo "🔨 Building Kubernetes manifests..."
         kustomize build . > /tmp/manifests.yaml
         
-        # Validate manifests
-        echo "✅ Validating manifests..."
-        kubectl apply --dry-run=client -f /tmp/manifests.yaml > /dev/null
+        # Final check - ensure keyvaultName is in the built manifests
+        echo "🔍 Final verification of built manifests..."
+        if ! grep -q "keyvaultName: $KEY_VAULT_NAME" /tmp/manifests.yaml; then
+          echo "❌ keyvaultName not found in built manifests!"
+          echo "Looking for SecretProviderClass in manifests:"
+          grep -A 20 "kind: SecretProviderClass" /tmp/manifests.yaml || echo "SecretProviderClass not found!"
+          exit 1
+        fi
+        
+        echo "✅ keyvaultName is properly set in manifests"
         
         # Apply manifests
         echo "📦 Applying manifests to cluster..."
         kubectl apply -f /tmp/manifests.yaml
         
-        # Determine deployment strategy
+        # Rest of the deployment logic...
         CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} \
           -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "none")
         
@@ -270,7 +249,6 @@ jobs:
           TARGET_DEPLOYMENT="easyshop-blue"
           OLD_DEPLOYMENT="easyshop-green"
         else
-          # First deployment
           TARGET_DEPLOYMENT="easyshop-blue"
           OLD_DEPLOYMENT="none"
         fi
@@ -279,83 +257,30 @@ jobs:
         echo "  Current: $CURRENT_DEPLOYMENT"
         echo "  Target: $TARGET_DEPLOYMENT"
         
-        # Force restart target deployment to pick up new secrets
-        echo "🔄 Restarting $TARGET_DEPLOYMENT deployment..."
+        # Force restart to pick up new configuration
         kubectl rollout restart deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} || true
         
-        # Wait for rollout with detailed status
+        # Wait for rollout
         echo "⏳ Waiting for $TARGET_DEPLOYMENT to be ready..."
-        
-        # Monitor rollout with timeout
-        ROLLOUT_SUCCESS=false
-        for i in {1..60}; do
-          READY_REPLICAS=$(kubectl get deployment $TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} \
-            -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-          DESIRED_REPLICAS=$(kubectl get deployment $TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} \
-            -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "2")
-          
-          echo "  Attempt $i/60: Ready replicas: $READY_REPLICAS/$DESIRED_REPLICAS"
-          
-          if [[ "$READY_REPLICAS" == "$DESIRED_REPLICAS" ]] && [[ "$READY_REPLICAS" != "0" ]]; then
-            ROLLOUT_SUCCESS=true
-            break
-          fi
-          
-          # Check for mount errors
-          MOUNT_ERRORS=$(kubectl get events -n ${{ env.NAMESPACE }} \
-            --field-selector involvedObject.kind=Pod \
-            --field-selector reason=FailedMount \
-            -o json | jq -r '.items[-1].message' 2>/dev/null || echo "")
-          
-          if [[ -n "$MOUNT_ERRORS" ]] && [[ "$MOUNT_ERRORS" != "null" ]]; then
-            echo "  ⚠️ Mount error detected: $MOUNT_ERRORS"
-            
-            # If identity error, try to fix it
-            if echo "$MOUNT_ERRORS" | grep -q "ManagedIdentityCredential"; then
-              echo "  🔧 Attempting to fix identity issue..."
-              
-              # Delete pods to force recreation
-              kubectl delete pods -n ${{ env.NAMESPACE }} \
-                -l app=$TARGET_DEPLOYMENT \
-                --force --grace-period=0 || true
-              
-              sleep 10
-            fi
-          fi
-          
-          sleep 10
-        done
-        
-        if [[ "$ROLLOUT_SUCCESS" == "true" ]]; then
-          echo "✅ Deployment rollout successful!"
-          
-          # Switch traffic
-          echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
-          kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
-            -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
-          
-          # Scale down old deployment
-          if [[ "$OLD_DEPLOYMENT" != "none" ]] && [[ "$OLD_DEPLOYMENT" != "$TARGET_DEPLOYMENT" ]]; then
-            echo "📉 Scaling down $OLD_DEPLOYMENT..."
-            kubectl scale deployment/$OLD_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || true
-          fi
-          
-          echo "🎉 Blue-Green deployment completed successfully!"
-        else
-          echo "❌ Deployment failed after 10 minutes"
-          
-          # Detailed diagnostics
-          echo "📋 Pod Status:"
+        kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=600s || {
+          echo "❌ Rollout failed, checking pod status..."
           kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
-          
-          echo "📋 Pod Descriptions:"
-          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT | tail -100
-          
-          echo "📋 Recent Events:"
-          kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp' | tail -20
-          
+          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT | tail -50
           exit 1
+        }
+        
+        # Switch traffic
+        echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
+        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
+          -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
+        
+        # Scale down old deployment
+        if [[ "$OLD_DEPLOYMENT" != "none" ]]; then
+          echo "📉 Scaling down $OLD_DEPLOYMENT..."
+          kubectl scale deployment/$OLD_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || true
         fi
+        
+        echo "🎉 Deployment completed successfully!"
 
     - name: 🔍 Verify Deployment
       if: success()

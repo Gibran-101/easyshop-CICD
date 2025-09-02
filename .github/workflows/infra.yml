@@ -220,32 +220,6 @@ jobs:
           echo "tenant_id=$(terraform output -raw tenant_id 2>/dev/null || echo 'not-created')" >> $GITHUB_OUTPUT
           echo "addon_identity_ready=$(terraform output -raw addon_identity_ready 2>/dev/null || echo 'false')" >> $GITHUB_OUTPUT
 
-  update-k8s-manifests:
-    name: 'Update Kubernetes Manifests'
-    runs-on: ubuntu-latest
-    needs: apply
-    if: success()
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Update & commit manifests
-        run: |
-          # Update SecretProviderClass with addon identity from Terraform
-          sed -i "s/PLACEHOLDER_CLIENT_ID/${{ needs.apply.outputs.key_vault_addon_client_id }}/g" kubernetes/15-keyvault-secret-provider.yaml
-          sed -i "s/PLACEHOLDER_TENANT_ID/${{ needs.apply.outputs.tenant_id }}/g" kubernetes/15-keyvault-secret-provider.yaml
-          sed -i "s/PLACEHOLDER_KEYVAULT_NAME/${{ needs.apply.outputs.key_vault_name }}/g" kubernetes/15-keyvault-secret-provider.yaml
-          
-          # Show what was updated
-          echo "📋 Updated SecretProviderClass:"
-          grep -E "userAssignedIdentityClientID|keyvaultName|tenantId" kubernetes/15-keyvault-secret-provider.yaml
-          
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add kubernetes/15-keyvault-secret-provider.yaml
-          git diff --staged --quiet || git commit -m "Update SecretProviderClass with Terraform outputs [skip ci]"
-          git push
-
   deploy-argocd:
     name: 'Deploy ArgoCD to AKS'
     runs-on: ubuntu-latest
@@ -356,7 +330,7 @@ jobs:
   trigger-deploy:
     name: 'Trigger Application Deployment'
     runs-on: ubuntu-latest
-    needs: [apply, update-k8s-manifests, deploy-argocd]
+    needs: [apply, deploy-argocd]
     if: success()
     steps:
       - name: Check addon identity readiness
@@ -386,4 +360,3 @@ jobs:
               "tenant_id": "${{ needs.apply.outputs.tenant_id }}",
               "addon_identity_ready": "${{ needs.apply.outputs.addon_identity_ready }}"
             }
-              
