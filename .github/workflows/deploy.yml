@@ -90,9 +90,14 @@ jobs:
     - name: ⚙️ Setup Kubernetes Tools
       run: |
         echo "🔑 Getting AKS credentials..."
+        
+        # Hard-code values to avoid masking issues
+        RESOURCE_GROUP="easyshop-rg"
+        AKS_CLUSTER="easyshop-aks"
+        
         az aks get-credentials \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --resource-group "$RESOURCE_GROUP" \
+          --name "$AKS_CLUSTER" \
           --overwrite-existing
         
         echo "📦 Installing kustomize..."
@@ -107,67 +112,83 @@ jobs:
         set -e
         echo "🔧 Configuring Key Vault CSI Driver..."
         
-        # Get configuration from repository dispatch payload OR from Azure
-        if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-          echo "📦 Using values from infrastructure workflow..."
-          KEY_VAULT_NAME="${{ github.event.client_payload.key_vault_name }}"
+        # Hard-code the resource group name to avoid masking issues
+        RESOURCE_GROUP="easyshop-rg"
+        AKS_CLUSTER="easyshop-aks"
+        
+        # ALWAYS query Azure directly for Key Vault and Tenant ID
+        # Don't rely on repository dispatch for these values
+        echo "🔍 Fetching values from Azure..."
+        
+        # Get Key Vault name (handles timestamp suffix)
+        KEY_VAULT_NAME=$(az keyvault list \
+          --resource-group "$RESOURCE_GROUP" \
+          --query "[?starts_with(name, 'easyshop-kv-')].name | [0]" \
+          -o tsv)
+        
+        # Get Tenant ID
+        TENANT_ID=$(az account show --query tenantId -o tsv)
+        
+        # Use addon identities from repository dispatch if available
+        # Otherwise query Azure
+        if [[ -n "${{ github.event.client_payload.key_vault_addon_client_id }}" ]]; then
           ADDON_CLIENT_ID="${{ github.event.client_payload.key_vault_addon_client_id }}"
           ADDON_OBJECT_ID="${{ github.event.client_payload.key_vault_addon_object_id }}"
-          TENANT_ID="${{ github.event.client_payload.tenant_id }}"
+          echo "📦 Using addon identities from repository dispatch"
         else
-          echo "🔍 Fetching values from Azure..."
-          TENANT_ID=$(az account show --query tenantId -o tsv)
-          
-          # Get Key Vault - handle the timestamp suffix
-          KEY_VAULT_NAME=$(az keyvault list \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv')].name | [0]" \
-            -o tsv)
-          
-          # Get addon identity
+          echo "🔍 Querying addon identities from Azure..."
           ADDON_CLIENT_ID=$(az aks show \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER" \
             --query "addonProfiles.azureKeyvaultSecretsProvider.identity.clientId" \
             -o tsv)
           
           ADDON_OBJECT_ID=$(az aks show \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER" \
             --query "addonProfiles.azureKeyvaultSecretsProvider.identity.objectId" \
             -o tsv)
         fi
         
-        # Validate we have all values
         echo "📋 Configuration:"
-        echo "  KEY_VAULT_NAME: ${KEY_VAULT_NAME}"
-        echo "  ADDON_CLIENT_ID: ${ADDON_CLIENT_ID}"
-        echo "  ADDON_OBJECT_ID: ${ADDON_OBJECT_ID}"
-        echo "  TENANT_ID: ${TENANT_ID}"
+        echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
+        echo "  TENANT_ID: $TENANT_ID"
+        echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID"
+        echo "  ADDON_OBJECT_ID: $ADDON_OBJECT_ID"
         
-        if [[ -z "$KEY_VAULT_NAME" || "$KEY_VAULT_NAME" == "null" || "$KEY_VAULT_NAME" == "not-created" ]]; then
-          echo "❌ Key Vault name is invalid or empty!"
-          echo "Checking what Key Vaults exist..."
-          az keyvault list --resource-group ${{ env.RESOURCE_GROUP }} --query "[].name" -o table
+        # Validate all required values
+        if [[ -z "$KEY_VAULT_NAME" ]]; then
+          echo "❌ Key Vault not found!"
           exit 1
         fi
         
-        # Set Key Vault access policy
+        if [[ -z "$TENANT_ID" ]]; then
+          echo "❌ Tenant ID not found!"
+          exit 1
+        fi
+        
+        if [[ -z "$ADDON_CLIENT_ID" ]]; then
+          echo "❌ Addon Client ID not found!"
+          exit 1
+        fi
+        
+        # CRITICAL: Set Key Vault access policy (this is currently missing)
         echo "🔐 Setting Key Vault access policy..."
         az keyvault set-policy \
           --name "$KEY_VAULT_NAME" \
           --object-id "$ADDON_OBJECT_ID" \
           --secret-permissions get list \
-          --output none || echo "Policy may already exist"
+          --output table
         
-        # Store for later use
+        echo "✅ Key Vault access policy configured"
+        
+        # Export for next steps
         echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
-        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
-        echo "ADDON_OBJECT_ID=$ADDON_OBJECT_ID" >> $GITHUB_ENV
         echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
         
-        # Wait for propagation
-        echo "⏳ Waiting for Azure AD propagation..."
+        # Wait for Azure AD propagation
+        echo "⏳ Waiting 30 seconds for Azure AD propagation..."
         sleep 30
 
     # Add this step BEFORE the Blue-Green Deployment step in .github/workflows/deploy.yml
