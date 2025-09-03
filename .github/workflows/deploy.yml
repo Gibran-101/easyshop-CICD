@@ -170,6 +170,236 @@ jobs:
         echo "⏳ Waiting for Azure AD propagation..."
         sleep 30
 
+    # Add this step BEFORE the Blue-Green Deployment step in .github/workflows/deploy.yml
+    #=======================================================================================
+
+    - name: 🔍 Diagnose SecretProviderClass Configuration
+      run: |
+        echo "=========================================="
+        echo "🔍 SECRETPROVIDERCLASS DIAGNOSTIC REPORT"
+        echo "=========================================="
+        
+        # Step 1: Check what values we're trying to use
+        echo "1️⃣ FETCHING AZURE RESOURCES..."
+        echo "------------------------------------------"
+        
+        # Get Key Vault
+        echo "Searching for Key Vaults in resource group ${{ env.RESOURCE_GROUP }}..."
+        KV_LIST=$(az keyvault list --resource-group ${{ env.RESOURCE_GROUP }} --query "[].name" -o json)
+        echo "Key Vaults found: $KV_LIST"
+        
+        KEY_VAULT_NAME=$(az keyvault list \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv-')].name | [0]" \
+          -o tsv)
+        
+        if [[ -z "$KEY_VAULT_NAME" || "$KEY_VAULT_NAME" == "null" ]]; then
+          echo "❌ CRITICAL: No Key Vault found!"
+          echo "Looking for any Key Vault in resource group..."
+          az keyvault list --resource-group ${{ env.RESOURCE_GROUP }} -o table
+        else
+          echo "✅ Key Vault found: $KEY_VAULT_NAME"
+        fi
+        
+        # Get Tenant ID
+        TENANT_ID=$(az account show --query tenantId -o tsv)
+        if [[ -z "$TENANT_ID" ]]; then
+          echo "❌ CRITICAL: Cannot get Tenant ID!"
+        else
+          echo "✅ Tenant ID: $TENANT_ID"
+        fi
+        
+        # Get AKS addon identity
+        echo ""
+        echo "Getting AKS addon identity..."
+        ADDON_JSON=$(az aks show \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --query "addonProfiles.azureKeyvaultSecretsProvider" \
+          -o json)
+        
+        echo "Addon configuration: $ADDON_JSON"
+        
+        ADDON_CLIENT_ID=$(echo "$ADDON_JSON" | jq -r '.identity.clientId // empty')
+        ADDON_OBJECT_ID=$(echo "$ADDON_JSON" | jq -r '.identity.objectId // empty')
+        
+        if [[ -z "$ADDON_CLIENT_ID" ]]; then
+          echo "❌ CRITICAL: Cannot get addon Client ID!"
+          echo "Trying alternative query..."
+          ADDON_CLIENT_ID=$(az aks show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --query "addonProfiles.azureKeyvaultSecretsProvider.identity.clientId" \
+            -o tsv)
+          echo "Alternative result: $ADDON_CLIENT_ID"
+        else
+          echo "✅ Addon Client ID: $ADDON_CLIENT_ID"
+        fi
+        
+        if [[ -z "$ADDON_OBJECT_ID" ]]; then
+          echo "❌ WARNING: Cannot get addon Object ID (needed for Key Vault policy)"
+        else
+          echo "✅ Addon Object ID: $ADDON_OBJECT_ID"
+        fi
+        
+        # Step 2: Check the source file
+        echo ""
+        echo "2️⃣ CHECKING SOURCE FILE..."
+        echo "------------------------------------------"
+        cd kubernetes
+        
+        if [[ ! -f "15-keyvault-secret-provider.yaml" ]]; then
+          echo "❌ CRITICAL: File 15-keyvault-secret-provider.yaml not found!"
+          echo "Files in directory:"
+          ls -la *.yaml
+        else
+          echo "✅ File exists"
+          echo "File content (first 30 lines):"
+          head -30 15-keyvault-secret-provider.yaml
+          
+          echo ""
+          echo "Checking for placeholders..."
+          grep -n "PLACEHOLDER" 15-keyvault-secret-provider.yaml || echo "No PLACEHOLDER found"
+          
+          echo ""
+          echo "Current values in file:"
+          grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" 15-keyvault-secret-provider.yaml
+        fi
+        
+        # Step 3: Test substitution
+        echo ""
+        echo "3️⃣ TESTING SUBSTITUTION..."
+        echo "------------------------------------------"
+        
+        if [[ -f "15-keyvault-secret-provider.yaml" ]]; then
+          cp 15-keyvault-secret-provider.yaml test-substitution.yaml
+          
+          echo "Before substitution:"
+          grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" test-substitution.yaml
+          
+          # Test each substitution individually
+          echo ""
+          echo "Testing keyvaultName substitution..."
+          sed -i "s/PLACEHOLDER_KEYVAULT_NAME/$KEY_VAULT_NAME/g" test-substitution.yaml
+          grep "keyvaultName:" test-substitution.yaml
+          
+          echo ""
+          echo "Testing tenantId substitution..."
+          sed -i "s/PLACEHOLDER_TENANT_ID/$TENANT_ID/g" test-substitution.yaml
+          grep "tenantId:" test-substitution.yaml
+          
+          echo ""
+          echo "Testing clientId substitution..."
+          sed -i "s/PLACEHOLDER_CLIENT_ID/$ADDON_CLIENT_ID/g" test-substitution.yaml
+          grep "userAssignedIdentityClientID:" test-substitution.yaml
+          
+          echo ""
+          echo "After all substitutions:"
+          grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" test-substitution.yaml
+          
+          echo ""
+          echo "Checking if any placeholders remain:"
+          grep "PLACEHOLDER" test-substitution.yaml && echo "❌ PLACEHOLDERS STILL EXIST!" || echo "✅ All placeholders replaced"
+          
+          rm test-substitution.yaml
+        fi
+        
+        # Step 4: Check kustomization.yaml
+        echo ""
+        echo "4️⃣ CHECKING KUSTOMIZATION..."
+        echo "------------------------------------------"
+        
+        if [[ -f "kustomization.yaml" ]]; then
+          echo "Checking if SecretProviderClass is in resources:"
+          grep "15-keyvault-secret-provider.yaml" kustomization.yaml && echo "✅ Found in kustomization" || echo "❌ NOT in kustomization!"
+        else
+          echo "❌ kustomization.yaml not found!"
+        fi
+        
+        # Step 5: Check what's currently in the cluster
+        echo ""
+        echo "5️⃣ CHECKING CLUSTER STATE..."
+        echo "------------------------------------------"
+        
+        echo "Checking if SecretProviderClass exists in cluster:"
+        kubectl get secretproviderclass -n ${{ env.NAMESPACE }} -o name || echo "No SecretProviderClass found"
+        
+        if kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} &>/dev/null; then
+          echo "SecretProviderClass exists, checking its configuration:"
+          CURRENT_KV=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.keyvaultName}')
+          CURRENT_TENANT=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.tenantId}')
+          CURRENT_CLIENT=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.userAssignedIdentityClientID}')
+          
+          echo "Current keyvaultName: '$CURRENT_KV'"
+          echo "Current tenantId: '$CURRENT_TENANT'"
+          echo "Current clientId: '$CURRENT_CLIENT'"
+          
+          if [[ -z "$CURRENT_KV" || "$CURRENT_KV" == "PLACEHOLDER_KEYVAULT_NAME" ]]; then
+            echo "❌ keyvaultName is not set or still has placeholder!"
+          fi
+          if [[ -z "$CURRENT_TENANT" || "$CURRENT_TENANT" == "PLACEHOLDER_TENANT_ID" ]]; then
+            echo "❌ tenantId is not set or still has placeholder!"
+          fi
+          if [[ -z "$CURRENT_CLIENT" || "$CURRENT_CLIENT" == "PLACEHOLDER_CLIENT_ID" ]]; then
+            echo "❌ userAssignedIdentityClientID is not set or still has placeholder!"
+          fi
+        fi
+        
+        # Step 6: Summary
+        echo ""
+        echo "6️⃣ DIAGNOSTIC SUMMARY..."
+        echo "------------------------------------------"
+        
+        ERROR_COUNT=0
+        
+        if [[ -z "$KEY_VAULT_NAME" || "$KEY_VAULT_NAME" == "null" ]]; then
+          echo "❌ FAIL: Key Vault name cannot be determined"
+          ((ERROR_COUNT++))
+        else
+          echo "✅ PASS: Key Vault name = $KEY_VAULT_NAME"
+        fi
+        
+        if [[ -z "$TENANT_ID" ]]; then
+          echo "❌ FAIL: Tenant ID cannot be determined"
+          ((ERROR_COUNT++))
+        else
+          echo "✅ PASS: Tenant ID = $TENANT_ID"
+        fi
+        
+        if [[ -z "$ADDON_CLIENT_ID" ]]; then
+          echo "❌ FAIL: Addon Client ID cannot be determined"
+          ((ERROR_COUNT++))
+        else
+          echo "✅ PASS: Addon Client ID = $ADDON_CLIENT_ID"
+        fi
+        
+        if [[ ! -f "15-keyvault-secret-provider.yaml" ]]; then
+          echo "❌ FAIL: SecretProviderClass file missing"
+          ((ERROR_COUNT++))
+        else
+          echo "✅ PASS: SecretProviderClass file exists"
+        fi
+        
+        echo ""
+        if [[ $ERROR_COUNT -gt 0 ]]; then
+          echo "❌ DIAGNOSTIC FAILED: $ERROR_COUNT critical issues found"
+          echo "Cannot proceed with deployment until these are fixed."
+          exit 1
+        else
+          echo "✅ All diagnostic checks passed"
+          echo "Proceeding with deployment..."
+        fi
+        
+        # Export values for next step
+        echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
+        echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
+        
+        echo "=========================================="
+        echo "END OF DIAGNOSTIC REPORT"
+        echo "=========================================="
+  
+#=============================================================================================
     # OPTIMIZED: Simplified deployment with better error handling
     - name: 🚀 Blue-Green Deployment
       run: |
