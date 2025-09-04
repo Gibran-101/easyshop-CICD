@@ -112,67 +112,40 @@ jobs:
         set -e
         echo "🔧 Configuring Key Vault CSI Driver..."
         
-        # Hard-code the resource group name to avoid masking issues
+        # Hard-code values to avoid issues
         RESOURCE_GROUP="easyshop-rg"
         AKS_CLUSTER="easyshop-aks"
         
-        # ALWAYS query Azure directly for Key Vault and Tenant ID
-        # Don't rely on repository dispatch for these values
-        echo "🔍 Fetching values from Azure..."
-        
-        # Get Key Vault name (handles timestamp suffix)
+        # Get Key Vault and Tenant
         KEY_VAULT_NAME=$(az keyvault list \
           --resource-group "$RESOURCE_GROUP" \
           --query "[?starts_with(name, 'easyshop-kv-')].name | [0]" \
           -o tsv)
         
-        # Get Tenant ID
         TENANT_ID=$(az account show --query tenantId -o tsv)
         
-        # Use addon identities from repository dispatch if available
-        # Otherwise query Azure
-        if [[ -n "${{ github.event.client_payload.key_vault_addon_client_id }}" ]]; then
-          ADDON_CLIENT_ID="${{ github.event.client_payload.key_vault_addon_client_id }}"
-          ADDON_OBJECT_ID="${{ github.event.client_payload.key_vault_addon_object_id }}"
-          echo "📦 Using addon identities from repository dispatch"
-        else
-          echo "🔍 Querying addon identities from Azure..."
-          ADDON_CLIENT_ID=$(az aks show \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$AKS_CLUSTER" \
-            --query "addonProfiles.azureKeyvaultSecretsProvider.identity.clientId" \
-            -o tsv)
-          
-          ADDON_OBJECT_ID=$(az aks show \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$AKS_CLUSTER" \
-            --query "addonProfiles.azureKeyvaultSecretsProvider.identity.objectId" \
-            -o tsv)
-        fi
+        # CRITICAL: Get the CORRECT identity from the node resource group
+        # NOT from the addon profile!
+        NODE_RG=$(az aks show -g "$RESOURCE_GROUP" -n "$AKS_CLUSTER" --query nodeResourceGroup -o tsv)
+        
+        # Get the azurekeyvaultsecretsprovider identity - this is what's actually on the nodes
+        ADDON_CLIENT_ID=$(az identity show \
+          --resource-group "$NODE_RG" \
+          --name "azurekeyvaultsecretsprovider-${AKS_CLUSTER}" \
+          --query clientId -o tsv)
+        
+        ADDON_OBJECT_ID=$(az identity show \
+          --resource-group "$NODE_RG" \
+          --name "azurekeyvaultsecretsprovider-${AKS_CLUSTER}" \
+          --query principalId -o tsv)
         
         echo "📋 Configuration:"
         echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
         echo "  TENANT_ID: $TENANT_ID"
-        echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID"
-        echo "  ADDON_OBJECT_ID: $ADDON_OBJECT_ID"
+        echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID (from node RG)"
+        echo "  ADDON_OBJECT_ID: $ADDON_OBJECT_ID (from node RG)"
         
-        # Validate all required values
-        if [[ -z "$KEY_VAULT_NAME" ]]; then
-          echo "❌ Key Vault not found!"
-          exit 1
-        fi
-        
-        if [[ -z "$TENANT_ID" ]]; then
-          echo "❌ Tenant ID not found!"
-          exit 1
-        fi
-        
-        if [[ -z "$ADDON_CLIENT_ID" ]]; then
-          echo "❌ Addon Client ID not found!"
-          exit 1
-        fi
-        
-        # CRITICAL: Set Key Vault access policy (this is currently missing)
+        # Set Key Vault access policy
         echo "🔐 Setting Key Vault access policy..."
         az keyvault set-policy \
           --name "$KEY_VAULT_NAME" \
@@ -180,15 +153,11 @@ jobs:
           --secret-permissions get list \
           --output table
         
-        echo "✅ Key Vault access policy configured"
-        
         # Export for next steps
         echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
         echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
         echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
         
-        # Wait for Azure AD propagation
-        echo "⏳ Waiting 30 seconds for Azure AD propagation..."
         sleep 30
 
     # Add this step BEFORE the Blue-Green Deployment step in .github/workflows/deploy.yml
