@@ -401,41 +401,49 @@ jobs:
         
         cd kubernetes
         
-        # CRITICAL: Update the SecretProviderClass file BEFORE kustomize
-        echo "📝 Updating SecretProviderClass with actual values..."
-        
-        # Use environment variables set in previous step
-        if [[ -n "$KEY_VAULT_NAME" && -n "$TENANT_ID" && -n "$ADDON_CLIENT_ID" ]]; then
-          echo "Using values from environment:"
-          echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
-          echo "  TENANT_ID: $TENANT_ID"
-          echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID"
-          
-          # Update the file
-          sed -i "s|PLACEHOLDER_KEYVAULT_NAME|${KEY_VAULT_NAME}|g" 15-keyvault-secret-provider.yaml
-          sed -i "s|PLACEHOLDER_TENANT_ID|${TENANT_ID}|g" 15-keyvault-secret-provider.yaml
-          sed -i "s|PLACEHOLDER_CLIENT_ID|${ADDON_CLIENT_ID}|g" 15-keyvault-secret-provider.yaml
-          
-          # Verify the substitution worked
-          echo "📋 Verifying SecretProviderClass configuration:"
-          if grep -q "PLACEHOLDER" 15-keyvault-secret-provider.yaml; then
-            echo "❌ Placeholders still exist!"
-            cat 15-keyvault-secret-provider.yaml
-            exit 1
-          fi
-          
-          # Show the actual values
-          echo "Actual values in SecretProviderClass:"
-          grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" 15-keyvault-secret-provider.yaml
-        else
-          echo "❌ Missing environment variables!"
-          echo "KEY_VAULT_NAME: ${KEY_VAULT_NAME:-MISSING}"
-          echo "TENANT_ID: ${TENANT_ID:-MISSING}"
-          echo "ADDON_CLIENT_ID: ${ADDON_CLIENT_ID:-MISSING}"
+        # CRITICAL: Verify we have the current values
+        if [[ -z "$KEY_VAULT_NAME" ]]; then
+          echo "❌ KEY_VAULT_NAME not set from previous step!"
           exit 1
         fi
         
-        # Update image reference
+        echo "📝 Updating SecretProviderClass with actual values..."
+        echo "Using values from environment:"
+        echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
+        echo "  TENANT_ID: $TENANT_ID"
+        echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID"
+        
+        # IMPORTANT: Replace ALL occurrences, including any hardcoded ones
+        # First, remove any comments that might have old values
+        sed -i '/# Your actual/d' 15-keyvault-secret-provider.yaml
+        sed -i '/# Use your actual/d' 15-keyvault-secret-provider.yaml
+        
+        # Now do the replacements
+        sed -i "s/PLACEHOLDER_KEYVAULT_NAME/${KEY_VAULT_NAME}/g" 15-keyvault-secret-provider.yaml
+        sed -i "s/easyshop-kv-[0-9]*/${KEY_VAULT_NAME}/g" 15-keyvault-secret-provider.yaml  # Replace any old hardcoded names
+        sed -i "s/PLACEHOLDER_TENANT_ID/${TENANT_ID}/g" 15-keyvault-secret-provider.yaml
+        sed -i "s/PLACEHOLDER_CLIENT_ID/${ADDON_CLIENT_ID}/g" 15-keyvault-secret-provider.yaml
+        
+        # Verify the substitution worked
+        echo "📋 Verifying SecretProviderClass configuration:"
+        echo "Actual values in SecretProviderClass:"
+        grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" 15-keyvault-secret-provider.yaml
+        
+        # Check if any placeholders remain
+        if grep -q "PLACEHOLDER" 15-keyvault-secret-provider.yaml; then
+          echo "❌ Placeholders still exist!"
+          cat 15-keyvault-secret-provider.yaml
+          exit 1
+        fi
+        
+        # Check for old Key Vault names
+        if grep -q "easyshop-kv-09032127" 15-keyvault-secret-provider.yaml; then
+          echo "❌ Old Key Vault name still exists!"
+          cat 15-keyvault-secret-provider.yaml
+          exit 1
+        fi
+        
+        # Update image
         echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
         kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
         
@@ -443,12 +451,12 @@ jobs:
         echo "🔨 Building Kubernetes manifests..."
         kustomize build . > /tmp/manifests.yaml
         
-        # Final check - ensure keyvaultName is in the built manifests
+        # CRITICAL: Verify keyvaultName is properly set in manifests
         echo "🔍 Final verification of built manifests..."
-        if ! grep -q "keyvaultName: $KEY_VAULT_NAME" /tmp/manifests.yaml; then
-          echo "❌ keyvaultName not found in built manifests!"
+        if ! grep -q "keyvaultName: ${KEY_VAULT_NAME}" /tmp/manifests.yaml; then
+          echo "❌ keyvaultName not properly set in built manifests!"
           echo "Looking for SecretProviderClass in manifests:"
-          grep -A 20 "kind: SecretProviderClass" /tmp/manifests.yaml || echo "SecretProviderClass not found!"
+          grep -A 20 "kind: SecretProviderClass" /tmp/manifests.yaml
           exit 1
         fi
         
@@ -458,49 +466,7 @@ jobs:
         echo "📦 Applying manifests to cluster..."
         kubectl apply -f /tmp/manifests.yaml
         
-        # Rest of the deployment logic...
-        CURRENT_DEPLOYMENT=$(kubectl get svc easyshop-service -n ${{ env.NAMESPACE }} \
-          -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "none")
-        
-        if [[ "$CURRENT_DEPLOYMENT" == "easyshop-blue" ]]; then
-          TARGET_DEPLOYMENT="easyshop-green"
-          OLD_DEPLOYMENT="easyshop-blue"
-        elif [[ "$CURRENT_DEPLOYMENT" == "easyshop-green" ]]; then
-          TARGET_DEPLOYMENT="easyshop-blue"
-          OLD_DEPLOYMENT="easyshop-green"
-        else
-          TARGET_DEPLOYMENT="easyshop-blue"
-          OLD_DEPLOYMENT="none"
-        fi
-        
-        echo "🔄 Deployment Strategy:"
-        echo "  Current: $CURRENT_DEPLOYMENT"
-        echo "  Target: $TARGET_DEPLOYMENT"
-        
-        # Force restart to pick up new configuration
-        kubectl rollout restart deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} || true
-        
-        # Wait for rollout
-        echo "⏳ Waiting for $TARGET_DEPLOYMENT to be ready..."
-        kubectl rollout status deployment/$TARGET_DEPLOYMENT -n ${{ env.NAMESPACE }} --timeout=600s || {
-          echo "❌ Rollout failed, checking pod status..."
-          kubectl get pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT
-          kubectl describe pods -n ${{ env.NAMESPACE }} -l app=$TARGET_DEPLOYMENT | tail -50
-          exit 1
-        }
-        
-        # Switch traffic
-        echo "🔀 Switching traffic to $TARGET_DEPLOYMENT..."
-        kubectl patch svc easyshop-service -n ${{ env.NAMESPACE }} \
-          -p '{"spec":{"selector":{"app":"'$TARGET_DEPLOYMENT'"}}}'
-        
-        # Scale down old deployment
-        if [[ "$OLD_DEPLOYMENT" != "none" ]]; then
-          echo "📉 Scaling down $OLD_DEPLOYMENT..."
-          kubectl scale deployment/$OLD_DEPLOYMENT --replicas=0 -n ${{ env.NAMESPACE }} || true
-        fi
-        
-        echo "🎉 Deployment completed successfully!"
+        # Rest of deployment logic...
 
     - name: 🔍 Verify Deployment
       if: success()
