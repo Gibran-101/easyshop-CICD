@@ -422,7 +422,7 @@ jobs:
         sed -i "s/PLACEHOLDER_KEYVAULT_NAME/${KEY_VAULT_NAME}/g" 15-keyvault-secret-provider.yaml
         sed -i "s/easyshop-kv-[0-9]*/${KEY_VAULT_NAME}/g" 15-keyvault-secret-provider.yaml  # Replace any old hardcoded names
         sed -i "s/PLACEHOLDER_TENANT_ID/${TENANT_ID}/g" 15-keyvault-secret-provider.yaml
-        
+        sed -i "s/PLACEHOLDER_CLIENT_ID/${ADDON_CLIENT_ID}/g" 15-keyvault-secret-provider.yaml
         
         # Verify the substitution worked
         echo "📋 Verifying SecretProviderClass configuration:"
