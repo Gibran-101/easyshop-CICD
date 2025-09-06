@@ -88,3 +88,23 @@ resource "azurerm_role_assignment" "aks_addon_keyvault_access" {
     time_sleep.wait_for_addon_identity  # Wait for identity propagation
   ]
 }
+
+# Grant the CSI driver identity access to Key Vault secrets
+resource "azurerm_key_vault_access_policy" "csi_driver_access" {
+  key_vault_id = var.key_vault_id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].object_id
+
+  secret_permissions = [
+    "Get",
+    "List"
+  ]
+
+  depends_on = [
+    azurerm_kubernetes_cluster.aks,
+    time_sleep.wait_for_addon_identity
+  ]
+}
+
+# Add this data source at the top of the file if not already there
+data "azurerm_client_config" "current" {}

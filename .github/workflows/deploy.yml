@@ -107,58 +107,50 @@ jobs:
     # OPTIMIZED: Single step for Key Vault setup with proper error handling
     # In .github/workflows/deploy.yml - Replace the entire Configure Key Vault Access step
 
-    - name: 🔧 Configure Key Vault Access and SecretProviderClass
+    # Update your deploy.yaml workflow
+# Replace the "Configure Key Vault Access" step with this:
+
+    - name: 🔧 Configure CSI Driver Identity
       run: |
         set -e
-        echo "🔧 Configuring Key Vault CSI Driver..."
+        echo "🔧 Getting CSI driver identity..."
         
-        # Hard-code values to avoid issues
-        RESOURCE_GROUP="easyshop-rg"
-        AKS_CLUSTER="easyshop-aks"
+        # Get the current CSI driver identity (this is dynamic)
+        NODE_RG=$(az aks show \
+          --resource-group "easyshop-rg" \
+          --name "easyshop-aks" \
+          --query "nodeResourceGroup" -o tsv)
         
-        # Get Key Vault and Tenant
+        CSI_CLIENT_ID=$(az identity show \
+          --resource-group "$NODE_RG" \
+          --name "azurekeyvaultsecretsprovider-easyshop-aks" \
+          --query "clientId" -o tsv)
+        
+        CSI_OBJECT_ID=$(az identity show \
+          --resource-group "$NODE_RG" \
+          --name "azurekeyvaultsecretsprovider-easyshop-aks" \
+          --query "principalId" -o tsv)
+        
+        # Get Key Vault name
         KEY_VAULT_NAME=$(az keyvault list \
-          --resource-group "$RESOURCE_GROUP" \
+          --resource-group "easyshop-rg" \
           --query "[?starts_with(name, 'easyshop-kv-')].name | [0]" \
           -o tsv)
         
+        # Get Tenant ID
         TENANT_ID=$(az account show --query tenantId -o tsv)
         
-        # CRITICAL: Get the CORRECT identity from the node resource group
-        # NOT from the addon profile!
-        NODE_RG=$(az aks show -g "$RESOURCE_GROUP" -n "$AKS_CLUSTER" --query nodeResourceGroup -o tsv)
-        
-        # Get the azurekeyvaultsecretsprovider identity - this is what's actually on the nodes
-        ADDON_CLIENT_ID=$(az identity show \
-          --resource-group "$NODE_RG" \
-          --name "azurekeyvaultsecretsprovider-${AKS_CLUSTER}" \
-          --query clientId -o tsv)
-        
-        ADDON_OBJECT_ID=$(az identity show \
-          --resource-group "$NODE_RG" \
-          --name "azurekeyvaultsecretsprovider-${AKS_CLUSTER}" \
-          --query principalId -o tsv)
-        
         echo "📋 Configuration:"
-        echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
-        echo "  TENANT_ID: $TENANT_ID"
-        echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID (from node RG)"
-        echo "  ADDON_OBJECT_ID: $ADDON_OBJECT_ID (from node RG)"
-        
-        # Set Key Vault access policy
-        echo "🔐 Setting Key Vault access policy..."
-        az keyvault set-policy \
-          --name "$KEY_VAULT_NAME" \
-          --object-id "$ADDON_OBJECT_ID" \
-          --secret-permissions get list \
-          --output table
+        echo "  CSI Client ID: $CSI_CLIENT_ID"
+        echo "  CSI Object ID: $CSI_OBJECT_ID"
+        echo "  Key Vault: $KEY_VAULT_NAME"
+        echo "  Tenant ID: $TENANT_ID"
         
         # Export for next steps
+        echo "CSI_CLIENT_ID=$CSI_CLIENT_ID" >> $GITHUB_ENV
+        echo "CSI_OBJECT_ID=$CSI_OBJECT_ID" >> $GITHUB_ENV
         echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
         echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
-        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
-        
-        sleep 30
 
     # Add this step BEFORE the Blue-Green Deployment step in .github/workflows/deploy.yml
     #=======================================================================================
