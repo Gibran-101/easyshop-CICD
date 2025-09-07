@@ -4,17 +4,18 @@ metadata:
   name: easyshop-ingress
   namespace: easyshop
   annotations:
-    # Use Azure Application Gateway Ingress Controller (AGIC)
+    # AGIC-specific annotations (UPDATED)
     kubernetes.io/ingress.class: "azure/application-gateway"
     
     # SSL/TLS configuration with Let's Encrypt
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     
-    # Azure Application Gateway specific settings
+    # Azure Application Gateway specific settings (UPDATED)
     appgw.ingress.kubernetes.io/ssl-redirect: "true"
     appgw.ingress.kubernetes.io/request-timeout: "60"
     appgw.ingress.kubernetes.io/connection-draining: "true"
     appgw.ingress.kubernetes.io/connection-draining-timeout: "30"
+    appgw.ingress.kubernetes.io/backend-path-prefix: "/"
     
 spec:
   tls:
@@ -34,3 +35,4 @@ spec:
             name: easyshop-service
             port:
               number: 80
+              

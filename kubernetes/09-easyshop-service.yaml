@@ -3,10 +3,57 @@ kind: Service
 metadata:
   name: easyshop-service
   namespace: easyshop
+  annotations:
+    appgw.ingress.kubernetes.io/backend-protocol: "http"
+    appgw.ingress.kubernetes.io/backend-hostname: "buildandship.space"
 spec:
   type: ClusterIP
   ports:
     - port: 80
       targetPort: 3000
+      protocol: TCP
+      name: http
   selector:
-    app: easyshop
+    app: easyshop-active  # Switch between easyshop-blue and easyshop-green
+
+---
+# OPTION 2: Separate services for blue/green (RECOMMENDED)
+# ADD: kubernetes/09a-easyshop-blue-service.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: easyshop-blue-service
+  namespace: easyshop
+  annotations:
+    appgw.ingress.kubernetes.io/backend-protocol: "http"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  selector:
+    app: easyshop-blue
+
+---
+# ADD: kubernetes/09b-easyshop-green-service.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: easyshop-green-service
+  namespace: easyshop
+  annotations:
+    appgw.ingress.kubernetes.io/backend-protocol: "http"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+  selector:
+    app: easyshop-green
+    

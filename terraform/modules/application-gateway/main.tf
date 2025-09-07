@@ -74,20 +74,25 @@ resource "azurerm_application_gateway" "this" {
 
   tags = var.tags
 
-  # Let AGIC manage dynamic resources
+  # UPDATED: Allow AGIC to manage these resources
   lifecycle {
     ignore_changes = [
+      # Allow AGIC to manage these dynamically
       backend_address_pool,
       backend_http_settings,
       probe,
       http_listener,
       request_routing_rule,
       ssl_certificate,
+      # Keep these managed by Terraform
+      tags,
+      location,
+      resource_group_name,
     ]
   }
 }
 
-# Create managed identity for AGIC
+# KEEP: Managed identity for AGIC (already correct)
 resource "azurerm_user_assigned_identity" "agic_identity" {
   name                = "${var.project_name}-agic-identity"
   location            = var.location
@@ -95,7 +100,7 @@ resource "azurerm_user_assigned_identity" "agic_identity" {
   tags                = var.tags
 }
 
-# Give AGIC permission to manage App Gateway
+# KEEP: Role assignment for AGIC (already correct)
 resource "azurerm_role_assignment" "agic_app_gateway_contributor" {
   scope                = azurerm_application_gateway.this.id
   role_definition_name = "Contributor"
