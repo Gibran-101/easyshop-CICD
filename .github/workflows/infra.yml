@@ -329,16 +329,15 @@ jobs:
       - name: Enable AGIC Add-on for AKS
         run: |
           APPGW_ID=$(az network application-gateway show \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --name ${{ env.APPGW_NAME }} \
+            --resource-group ${{ secrets.TF_PROJECT_NAME }}-rg \
+            --name ${{ secrets.TF_PROJECT_NAME }}-app-gateway \
             --query "id" -o tsv)
 
           az aks enable-addons \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --name ${{ env.AKS_NAME }} \
+            --resource-group ${{ secrets.TF_PROJECT_NAME }}-rg \
+            --name ${{ secrets.TF_AKS_CLUSTER_NAME }} \
             --addons ingress-appgw \
             --appgw-id $APPGW_ID
-
 
   # SINGLE trigger-deploy job - properly configured
   trigger-deploy:
