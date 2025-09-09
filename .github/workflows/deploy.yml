@@ -277,8 +277,8 @@ jobs:
           
           echo ""
           echo "Testing clientId substitution..."
-          sed -i "s/PLACEHOLDER_CLIENT_ID/$ADDON_CLIENT_ID/g" test-substitution.yaml
-          grep "userAssignedIdentityClientID:" test-substitution.yaml
+          sed -i "s|PLACEHOLDER_RESOURCE_ID|$CSI_RESOURCE_ID|g" test-substitution.yaml
+          grep "userAssignedIdentityID:" test-substitution.yaml
           
           echo ""
           echo "After all substitutions:"
@@ -327,8 +327,8 @@ jobs:
           if [[ -z "$CURRENT_TENANT" || "$CURRENT_TENANT" == "PLACEHOLDER_TENANT_ID" ]]; then
             echo "❌ tenantId is not set or still has placeholder!"
           fi
-          if [[ -z "$CURRENT_CLIENT" || "$CURRENT_CLIENT" == "PLACEHOLDER_CLIENT_ID" ]]; then
-            echo "❌ userAssignedIdentityClientID is not set or still has placeholder!"
+          if [[ -z "$CURRENT_CLIENT" || "$CURRENT_CLIENT" == "PLACEHOLDER_RESOURCE_ID" ]]; then
+            echo "❌ userAssignedIdentityID is not set or still has placeholder!"
           fi
         fi
         
