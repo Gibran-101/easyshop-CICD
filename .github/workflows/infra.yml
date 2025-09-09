@@ -326,76 +326,19 @@ jobs:
           
           echo "✅ ArgoCD Image Updater deployed successfully!"
 
-      # Add this step to .github/workflows/infra.yml
-# Place it in the "deploy-argocd" job, AFTER the "Deploy ArgoCD Image Updater" step
-
-      - name: Deploy AGIC (Azure Application Gateway Ingress Controller)
+      - name: Enable AGIC Add-on for AKS
         run: |
-          echo "📦 Installing AGIC (Azure Application Gateway Ingress Controller)..."
-          
-          # Get Application Gateway details from Terraform
-          APP_GATEWAY_NAME="${{ secrets.TF_PROJECT_NAME }}-app-gateway"
-          SUBSCRIPTION_ID="${{ secrets.ARM_SUBSCRIPTION_ID }}"
-          RESOURCE_GROUP="${{ secrets.TF_PROJECT_NAME }}-rg"
-          
-          echo "📋 AGIC Configuration:"
-          echo "  Subscription: $SUBSCRIPTION_ID"
-          echo "  Resource Group: $RESOURCE_GROUP"
-          echo "  Application Gateway: $APP_GATEWAY_NAME"
-          
-          # Verify Application Gateway exists
-          if ! az network application-gateway show \
-            --name "$APP_GATEWAY_NAME" \
-            --resource-group "$RESOURCE_GROUP" &>/dev/null; then
-            echo "❌ Application Gateway not found!"
-            echo "Available Application Gateways:"
-            az network application-gateway list --resource-group "$RESOURCE_GROUP" --query "[].name" -o table
-            exit 1
-          fi
-          
-          echo "✅ Application Gateway found"
-          
-          # Add AGIC Helm repository
-          helm repo add application-gateway-kubernetes-ingress \
-            https://appgwingress.blob.core.windows.net/ingress-azure-helm-package/
-          helm repo update
-          
-          # Create AGIC namespace
-          kubectl create namespace agic-system --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Install AGIC using Helm with workload identity
-          echo "🚀 Installing AGIC..."
-          helm upgrade --install ingress-azure \
-            application-gateway-kubernetes-ingress/ingress-azure \
-            --namespace agic-system \
-            --set appgw.subscriptionId="$SUBSCRIPTION_ID" \
-            --set appgw.resourceGroup="$RESOURCE_GROUP" \
-            --set appgw.name="$APP_GATEWAY_NAME" \
-            --set appgw.usePrivateIP=false \
-            --set kubernetes.watchNamespace="" \
-            --set armAuth.type=workloadIdentity \
-            --set armAuth.identityClientID=$(az identity show \
-              --resource-group "$RESOURCE_GROUP" \
-              --name "${{ secrets.TF_PROJECT_NAME }}-agic-identity" \
-              --query clientId -o tsv) \
-            --wait --timeout=10m
-          
-          # Verify AGIC installation
-          echo "🔍 Verifying AGIC installation..."
-          kubectl get pods -n agic-system
-          kubectl get ingressclass
-          
-          # Check if azure/application-gateway ingress class exists
-          if kubectl get ingressclass azure-application-gateway &>/dev/null; then
-            echo "✅ AGIC installed successfully!"
-            echo "📋 Available ingress classes:"
-            kubectl get ingressclass
-          else
-            echo "⚠️ AGIC installed but ingress class not found. Checking logs..."
-            kubectl logs -n agic-system -l app=ingress-azure --tail=50
-          fi
-          
-          echo "✅ AGIC deployment completed!"
+          APPGW_ID=$(az network application-gateway show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.APPGW_NAME }} \
+            --query "id" -o tsv)
+
+          az aks enable-addons \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_NAME }} \
+            --addons ingress-appgw \
+            --appgw-id $APPGW_ID
+
 
   # SINGLE trigger-deploy job - properly configured
   trigger-deploy:
