@@ -110,6 +110,9 @@ jobs:
     # Update your deploy.yaml workflow
 # Replace the "Configure Key Vault Access" step with this:
 
+    # In .github/workflows/deploy.yml
+# UPDATE: The Configure CSI Driver Identity step
+
     - name: 🔧 Configure CSI Driver Identity
       run: |
         set -e
@@ -121,18 +124,11 @@ jobs:
           --name "easyshop-aks" \
           --query "nodeResourceGroup" -o tsv)
         
+        # IMPORTANT: Get CLIENT_ID instead of resource ID
         CSI_CLIENT_ID=$(az identity show \
           --resource-group "$NODE_RG" \
           --name "azurekeyvaultsecretsprovider-easyshop-aks" \
           --query "clientId" -o tsv)
-        
-        CSI_OBJECT_ID=$(az identity show \
-          --resource-group "$NODE_RG" \
-          --name "azurekeyvaultsecretsprovider-easyshop-aks" \
-          --query "principalId" -o tsv)
-        
-        # Get the full resource ID (not just client ID)
-        CSI_RESOURCE_ID="/subscriptions/$(az account show --query id -o tsv)/resourcegroups/$NODE_RG/providers/Microsoft.ManagedIdentity/userAssignedIdentities/azurekeyvaultsecretsprovider-easyshop-aks"
         
         # Get Key Vault name
         KEY_VAULT_NAME=$(az keyvault list \
@@ -145,15 +141,11 @@ jobs:
         
         echo "📋 Configuration:"
         echo "  CSI Client ID: $CSI_CLIENT_ID"
-        echo "  CSI Object ID: $CSI_OBJECT_ID"
-        echo "  CSI Resource ID: $CSI_RESOURCE_ID"
         echo "  Key Vault: $KEY_VAULT_NAME"
         echo "  Tenant ID: $TENANT_ID"
         
         # Export for next steps
         echo "CSI_CLIENT_ID=$CSI_CLIENT_ID" >> $GITHUB_ENV
-        echo "CSI_OBJECT_ID=$CSI_OBJECT_ID" >> $GITHUB_ENV
-        echo "CSI_RESOURCE_ID=$CSI_RESOURCE_ID" >> $GITHUB_ENV
         echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
         echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
 
@@ -277,7 +269,7 @@ jobs:
           
           echo ""
           echo "Testing clientId substitution..."
-          sed -i "s|PLACEHOLDER_RESOURCE_ID|$CSI_RESOURCE_ID|g" test-substitution.yaml
+          sed -i "s|PLACEHOLDER_CLIENT_ID|$CSI_RESOURCE_ID|g" test-substitution.yaml
           grep "userAssignedIdentityID:" test-substitution.yaml
           
           echo ""
@@ -327,7 +319,7 @@ jobs:
           if [[ -z "$CURRENT_TENANT" || "$CURRENT_TENANT" == "PLACEHOLDER_TENANT_ID" ]]; then
             echo "❌ tenantId is not set or still has placeholder!"
           fi
-          if [[ -z "$CURRENT_CLIENT" || "$CURRENT_CLIENT" == "PLACEHOLDER_RESOURCE_ID" ]]; then
+          if [[ -z "$CURRENT_CLIENT" || "$CURRENT_CLIENT" == "PLACEHOLDER_CLIENT_ID" ]]; then
             echo "❌ userAssignedIdentityID is not set or still has placeholder!"
           fi
         fi
@@ -410,16 +402,11 @@ jobs:
         echo "  TENANT_ID: $TENANT_ID"
         echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID"
         
-        # IMPORTANT: Replace ALL occurrences, including any hardcoded ones
-        # First, remove any comments that might have old values
-        sed -i '/# Your actual/d' 15-keyvault-secret-provider.yaml
-        sed -i '/# Use your actual/d' 15-keyvault-secret-provider.yaml
-        
         # Now do the replacements
         sed -i "s/PLACEHOLDER_KEYVAULT_NAME/${KEY_VAULT_NAME}/g" 15-keyvault-secret-provider.yaml
-        sed -i "s/easyshop-kv-[0-9]*/${KEY_VAULT_NAME}/g" 15-keyvault-secret-provider.yaml  # Replace any old hardcoded names
+        
         sed -i "s/PLACEHOLDER_TENANT_ID/${TENANT_ID}/g" 15-keyvault-secret-provider.yaml
-        sed -i "s|PLACEHOLDER_RESOURCE_ID|${CSI_RESOURCE_ID}|g" 15-keyvault-secret-provider.yaml
+        sed -i "s/PLACEHOLDER_CLIENT_ID/${CSI_CLIENT_ID}/g" 15-keyvault-secret-provider.yaml
         
         # Verify the substitution worked
         echo "📋 Verifying SecretProviderClass configuration:"
@@ -432,38 +419,6 @@ jobs:
           cat 15-keyvault-secret-provider.yaml
           exit 1
         fi
-        
-        # Check for old Key Vault names
-        if grep -q "easyshop-kv-09032127" 15-keyvault-secret-provider.yaml; then
-          echo "❌ Old Key Vault name still exists!"
-          cat 15-keyvault-secret-provider.yaml
-          exit 1
-        fi
-        
-        # Update image
-        echo "📝 Updating image to: ${{ env.IMAGE_WITH_DIGEST }}"
-        kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}
-        
-        # Build manifests
-        echo "🔨 Building Kubernetes manifests..."
-        kustomize build . > /tmp/manifests.yaml
-        
-        # CRITICAL: Verify keyvaultName is properly set in manifests
-        echo "🔍 Final verification of built manifests..."
-        if ! grep -q "keyvaultName: ${KEY_VAULT_NAME}" /tmp/manifests.yaml; then
-          echo "❌ keyvaultName not properly set in built manifests!"
-          echo "Looking for SecretProviderClass in manifests:"
-          grep -A 20 "kind: SecretProviderClass" /tmp/manifests.yaml
-          exit 1
-        fi
-        
-        echo "✅ keyvaultName is properly set in manifests"
-        
-        # Apply manifests
-        echo "📦 Applying manifests to cluster..."
-        kubectl apply -f /tmp/manifests.yaml
-        
-        # Rest of deployment logic...
 
     - name: 🔍 Verify Deployment
       if: success()
