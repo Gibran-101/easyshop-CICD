@@ -71,25 +71,8 @@ resource "time_sleep" "wait_for_addon_identity" {
   }
 }
 
-# Grant AKS addon identity access to Key Vault secrets with proper timing
-resource "azurerm_role_assignment" "aks_addon_keyvault_access" {
-  principal_id         = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].object_id
-  role_definition_name = "Key Vault Secrets User"
-  scope                = var.key_vault_id
-
-  skip_service_principal_aad_check = true
-  
-  lifecycle {
-    create_before_destroy = true
-  }
-  
-  depends_on = [
-    azurerm_kubernetes_cluster.aks,
-    time_sleep.wait_for_addon_identity  # Wait for identity propagation
-  ]
-}
-
-# Grant the CSI driver identity access to Key Vault secrets
+# CHOICE 1: Use Access Policy Approach (RECOMMENDED for your setup)
+# Grant the CSI driver identity access to Key Vault secrets using access policies
 resource "azurerm_key_vault_access_policy" "csi_driver_access" {
   key_vault_id = var.key_vault_id
   tenant_id    = data.azurerm_client_config.current.tenant_id
@@ -105,6 +88,22 @@ resource "azurerm_key_vault_access_policy" "csi_driver_access" {
     time_sleep.wait_for_addon_identity
   ]
 }
+
+# REMOVED: The conflicting RBAC role assignment
+# This was causing the "Identity not found" errors
+# resource "azurerm_role_assignment" "aks_addon_keyvault_access" {
+#   principal_id         = azurerm_kubernetes_cluster.aks.key_vault_secrets_provider[0].secret_identity[0].object_id
+#   role_definition_name = "Key Vault Secrets User"
+#   scope                = var.key_vault_id
+#   skip_service_principal_aad_check = true
+#   lifecycle {
+#     create_before_destroy = true
+#   }
+#   depends_on = [
+#     azurerm_kubernetes_cluster.aks,
+#     time_sleep.wait_for_addon_identity
+#   ]
+# }
 
 # Add this data source at the top of the file if not already there
 data "azurerm_client_config" "current" {}
