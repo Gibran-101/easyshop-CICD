@@ -269,7 +269,7 @@ jobs:
           
           echo ""
           echo "Testing clientId substitution..."
-          sed -i "s|PLACEHOLDER_CLIENT_ID|$CSI_RESOURCE_ID|g" test-substitution.yaml
+          sed -i "s|PLACEHOLDER_CLIENT_ID|$CSI_CLIENT_ID|g" test-substitution.yaml
           grep "userAssignedIdentityID:" test-substitution.yaml
           
           echo ""
