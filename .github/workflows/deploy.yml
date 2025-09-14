@@ -124,11 +124,12 @@ jobs:
           --name "easyshop-aks" \
           --query "nodeResourceGroup" -o tsv)
         
-        # IMPORTANT: Get CLIENT_ID instead of resource ID
-        CSI_CLIENT_ID=$(az identity show \
-          --resource-group "$NODE_RG" \
-          --name "azurekeyvaultsecretsprovider-easyshop-aks" \
-          --query "clientId" -o tsv)
+        # Get CSI driver identity from AKS addon (more reliable)
+        ADDON_CLIENT_ID=$(az aks show \
+          --resource-group "easyshop-rg" \
+          --name "easyshop-aks" \
+          --query "addonProfiles.azureKeyvaultSecretsProvider.identity.clientId" \
+          -o tsv)
         
         # Get Key Vault name
         KEY_VAULT_NAME=$(az keyvault list \
@@ -140,12 +141,12 @@ jobs:
         TENANT_ID=$(az account show --query tenantId -o tsv)
         
         echo "📋 Configuration:"
-        echo "  CSI Client ID: $CSI_CLIENT_ID"
+        echo "  CSI Client ID: $ADDON_CLIENT_ID"
         echo "  Key Vault: $KEY_VAULT_NAME"
         echo "  Tenant ID: $TENANT_ID"
-        
+
         # Export for next steps
-        echo "CSI_CLIENT_ID=$CSI_CLIENT_ID" >> $GITHUB_ENV
+        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
         echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
         echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
 
