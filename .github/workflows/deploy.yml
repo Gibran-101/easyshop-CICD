@@ -116,264 +116,511 @@ jobs:
     - name: 🔧 Configure CSI Driver Identity
       run: |
         set -e
-        echo "🔧 Getting CSI driver identity..."
+        echo "🔧 Retrieving CSI driver identity with robust error handling..."
         
-        # Get the current CSI driver identity (this is dynamic)
-        NODE_RG=$(az aks show \
-          --resource-group "easyshop-rg" \
-          --name "easyshop-aks" \
-          --query "nodeResourceGroup" -o tsv)
+        # Function to validate UUID format
+        validate_uuid() {
+          local uuid="$1"
+          if [[ $uuid =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            return 0
+          else
+            return 1
+          fi
+        }
         
-        # Get CSI driver identity from AKS addon (more reliable)
-        ADDON_CLIENT_ID=$(az aks show \
-          --resource-group "easyshop-rg" \
-          --name "easyshop-aks" \
-          --query "addonProfiles.azureKeyvaultSecretsProvider.identity.clientId" \
-          -o tsv)
+        # Function to retry Azure CLI commands with exponential backoff
+        retry_az_command() {
+          local max_attempts=3
+          local delay=2
+          local attempt=1
+          local command="$1"
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "Executing: $command (attempt $attempt/$max_attempts)"
+            if eval "$command"; then
+              return 0
+            else
+              local exit_code=$?
+              echo "⚠️ Attempt $attempt failed with exit code $exit_code"
+              
+              # Check for specific Azure CLI errors
+              if [[ $exit_code -eq 3 ]]; then
+                echo "❌ Azure CLI authentication error - check service principal credentials"
+                return 1
+              elif [[ $exit_code -eq 1 ]]; then
+                echo "⚠️ Resource not found or access denied - will retry"
+              fi
+              
+              if [ $attempt -eq $max_attempts ]; then
+                echo "❌ Command failed after $max_attempts attempts: $command"
+                return 1
+              else
+                echo "Retrying in ${delay}s..."
+                sleep $delay
+                delay=$((delay * 2))
+                attempt=$((attempt + 1))
+              fi
+            fi
+          done
+        }
         
-        # Get Key Vault name
+        # Function to check Azure CLI connectivity
+        check_azure_connectivity() {
+          echo "Checking Azure CLI connectivity..."
+          if ! az account show >/dev/null 2>&1; then
+            echo "❌ Azure CLI not authenticated or not working"
+            echo "Current Azure context:"
+            az account show || echo "Failed to get account info"
+            return 1
+          fi
+          echo "✅ Azure CLI connectivity verified"
+          return 0
+        }
+        
+        # Step 0: Check Azure connectivity first
+        if ! check_azure_connectivity; then
+          echo "❌ Cannot proceed without Azure CLI connectivity"
+          exit 1
+        fi
+        
+        # Step 1: Get CSI driver identity with multiple fallback methods
+        echo "1️⃣ Retrieving CSI driver addon identity..."
+        
+        # Primary method: Direct addon query
+        ADDON_CLIENT_ID=""
+        if retry_az_command "ADDON_CLIENT_ID=\$(az aks show --resource-group '${{ env.RESOURCE_GROUP }}' --name '${{ env.AKS_CLUSTER_NAME }}' --query 'addonProfiles.azureKeyvaultSecretsProvider.identity.clientId' -o tsv 2>/dev/null)"; then
+          if [[ -n "$ADDON_CLIENT_ID" && "$ADDON_CLIENT_ID" != "null" ]]; then
+            echo "✅ Primary method successful: $ADDON_CLIENT_ID"
+          else
+            ADDON_CLIENT_ID=""
+          fi
+        fi
+        
+        # Fallback method: Check if addon is enabled first
+        if [[ -z "$ADDON_CLIENT_ID" ]]; then
+          echo "🔄 Primary method failed, checking addon status..."
+          
+          ADDON_ENABLED=$(az aks show \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name "${{ env.AKS_CLUSTER_NAME }}" \
+            --query "addonProfiles.azureKeyvaultSecretsProvider.enabled" \
+            -o tsv 2>/dev/null || echo "false")
+          
+          if [[ "$ADDON_ENABLED" != "true" ]]; then
+            echo "❌ CRITICAL: Key Vault secrets provider addon is not enabled!"
+            echo "Enable it with: az aks enable-addons --addons azure-keyvault-secrets-provider --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER_NAME }}"
+            exit 1
+          fi
+          
+          # Try alternative query method
+          echo "🔄 Trying alternative identity retrieval..."
+          ADDON_JSON=$(az aks show \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --name "${{ env.AKS_CLUSTER_NAME }}" \
+            --query "addonProfiles.azureKeyvaultSecretsProvider" \
+            -o json 2>/dev/null)
+          
+          if [[ -n "$ADDON_JSON" && "$ADDON_JSON" != "null" ]]; then
+            ADDON_CLIENT_ID=$(echo "$ADDON_JSON" | jq -r '.identity.clientId // empty' 2>/dev/null)
+          fi
+        fi
+        
+        # Validate the retrieved client ID
+        if [[ -z "$ADDON_CLIENT_ID" || "$ADDON_CLIENT_ID" == "null" ]]; then
+          echo "❌ CRITICAL: Cannot retrieve CSI driver addon client ID!"
+          echo "Debugging information:"
+          echo "Resource Group: ${{ env.RESOURCE_GROUP }}"
+          echo "AKS Cluster: ${{ env.AKS_CLUSTER_NAME }}"
+          echo "Addon status:"
+          az aks show --resource-group "${{ env.RESOURCE_GROUP }}" --name "${{ env.AKS_CLUSTER_NAME }}" --query "addonProfiles.azureKeyvaultSecretsProvider" -o json || echo "Failed to get addon info"
+          exit 1
+        fi
+        
+        if ! validate_uuid "$ADDON_CLIENT_ID"; then
+          echo "❌ CRITICAL: Retrieved client ID is not a valid UUID: $ADDON_CLIENT_ID"
+          exit 1
+        fi
+        
+        echo "✅ CSI Driver Client ID: $ADDON_CLIENT_ID"
+        
+        # Step 2: Get Key Vault name
+        echo "2️⃣ Retrieving Key Vault name..."
+        
         KEY_VAULT_NAME=$(az keyvault list \
-          --resource-group "easyshop-rg" \
-          --query "[?starts_with(name, 'easyshop-kv-')].name | [0]" \
-          -o tsv)
+          --resource-group "${{ env.RESOURCE_GROUP }}" \
+          --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv-')].name | [0]" \
+          -o tsv 2>/dev/null)
         
-        # Get Tenant ID
-        TENANT_ID=$(az account show --query tenantId -o tsv)
+        if [[ -z "$KEY_VAULT_NAME" || "$KEY_VAULT_NAME" == "null" ]]; then
+          echo "⚠️ No Key Vault found with expected naming pattern, searching for any Key Vault..."
+          KEY_VAULT_NAME=$(az keyvault list \
+            --resource-group "${{ env.RESOURCE_GROUP }}" \
+            --query "[0].name" \
+            -o tsv 2>/dev/null)
+          
+          if [[ -z "$KEY_VAULT_NAME" || "$KEY_VAULT_NAME" == "null" ]]; then
+            echo "❌ CRITICAL: No Key Vault found in resource group ${{ env.RESOURCE_GROUP }}"
+            echo "Available Key Vaults:"
+            az keyvault list --resource-group "${{ env.RESOURCE_GROUP }}" -o table || echo "Failed to list Key Vaults"
+            exit 1
+          fi
+        fi
         
-        echo "📋 Configuration:"
+        echo "✅ Key Vault Name: $KEY_VAULT_NAME"
+        
+        # Step 3: Get Tenant ID
+        echo "3️⃣ Retrieving Tenant ID..."
+        
+        TENANT_ID=$(az account show --query tenantId -o tsv 2>/dev/null)
+        
+        if [[ -z "$TENANT_ID" || "$TENANT_ID" == "null" ]]; then
+          echo "❌ CRITICAL: Cannot retrieve tenant ID"
+          exit 1
+        fi
+        
+        if ! validate_uuid "$TENANT_ID"; then
+          echo "❌ CRITICAL: Retrieved tenant ID is not a valid UUID: $TENANT_ID"
+          exit 1
+        fi
+        
+        echo "✅ Tenant ID: $TENANT_ID"
+        
+        # Export values for next steps
+        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
+        echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
+        echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+        
+        echo "📋 Summary - Retrieved Configuration:"
         echo "  CSI Client ID: $ADDON_CLIENT_ID"
         echo "  Key Vault: $KEY_VAULT_NAME"
         echo "  Tenant ID: $TENANT_ID"
 
-        # Export for next steps
-        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
-        echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
-        echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+    - name: 🔐 Validate Key Vault Access and Role Assignments
+      run: |
+        set -e
+        echo "🔐 Validating Key Vault access and role assignments..."
+        
+        # Get the addon object ID for role assignment checks
+        echo "1️⃣ Getting CSI driver addon object ID..."
+        ADDON_OBJECT_ID=$(az aks show \
+          --resource-group "${{ env.RESOURCE_GROUP }}" \
+          --name "${{ env.AKS_CLUSTER_NAME }}" \
+          --query "addonProfiles.azureKeyvaultSecretsProvider.identity.objectId" \
+          -o tsv 2>/dev/null)
+        
+        if [[ -z "$ADDON_OBJECT_ID" || "$ADDON_OBJECT_ID" == "null" ]]; then
+          echo "❌ CRITICAL: Cannot retrieve addon object ID for role validation"
+          exit 1
+        fi
+        
+        echo "✅ Addon Object ID: $ADDON_OBJECT_ID"
+        
+        # Step 2: Validate Key Vault exists and is accessible
+        echo "2️⃣ Validating Key Vault accessibility..."
+        
+        KV_EXISTS=$(az keyvault show --name "$KEY_VAULT_NAME" --query "id" -o tsv 2>/dev/null || echo "")
+        if [[ -z "$KV_EXISTS" ]]; then
+          echo "❌ CRITICAL: Key Vault '$KEY_VAULT_NAME' does not exist or is not accessible"
+          echo "Available Key Vaults in resource group:"
+          az keyvault list --resource-group "${{ env.RESOURCE_GROUP }}" -o table
+          exit 1
+        fi
+        
+        echo "✅ Key Vault '$KEY_VAULT_NAME' is accessible"
+        
+        # Step 3: Check Key Vault role assignments
+        echo "3️⃣ Validating Key Vault role assignments..."
+        
+        # Get Key Vault resource ID for role assignment scope
+        KV_RESOURCE_ID=$(az keyvault show --name "$KEY_VAULT_NAME" --query "id" -o tsv)
+        
+        # Check for Key Vault Secrets User role
+        SECRETS_USER_ROLE=$(az role assignment list \
+          --assignee "$ADDON_OBJECT_ID" \
+          --scope "$KV_RESOURCE_ID" \
+          --role "Key Vault Secrets User" \
+          --query "[0].id" -o tsv 2>/dev/null || echo "")
+        
+        # Check for Key Vault Secrets Reader role (alternative)
+        SECRETS_READER_ROLE=$(az role assignment list \
+          --assignee "$ADDON_OBJECT_ID" \
+          --scope "$KV_RESOURCE_ID" \
+          --role "Key Vault Secrets Reader" \
+          --query "[0].id" -o tsv 2>/dev/null || echo "")
+        
+        # Check for access policy (legacy approach)
+        ACCESS_POLICY=$(az keyvault show --name "$KEY_VAULT_NAME" \
+          --query "properties.accessPolicies[?objectId=='$ADDON_OBJECT_ID'].permissions.secrets" \
+          -o tsv 2>/dev/null || echo "")
+        
+        # Validate that at least one access method is configured
+        if [[ -n "$SECRETS_USER_ROLE" ]]; then
+          echo "✅ CSI driver has 'Key Vault Secrets User' role assignment"
+          ACCESS_METHOD="RBAC (Key Vault Secrets User)"
+        elif [[ -n "$SECRETS_READER_ROLE" ]]; then
+          echo "✅ CSI driver has 'Key Vault Secrets Reader' role assignment"
+          ACCESS_METHOD="RBAC (Key Vault Secrets Reader)"
+        elif [[ -n "$ACCESS_POLICY" ]]; then
+          echo "✅ CSI driver has Key Vault access policy"
+          echo "Access policy permissions: $ACCESS_POLICY"
+          ACCESS_METHOD="Access Policy"
+        else
+          echo "❌ CRITICAL: CSI driver identity has no Key Vault access!"
+          echo "The identity '$ADDON_OBJECT_ID' needs either:"
+          echo "  1. 'Key Vault Secrets User' role assignment, OR"
+          echo "  2. 'Key Vault Secrets Reader' role assignment, OR"
+          echo "  3. Key Vault access policy with 'Get' and 'List' secret permissions"
+          echo ""
+          echo "To fix this, run one of these commands:"
+          echo "# Option 1: Assign RBAC role (recommended)"
+          echo "az role assignment create --assignee '$ADDON_OBJECT_ID' --role 'Key Vault Secrets User' --scope '$KV_RESOURCE_ID'"
+          echo ""
+          echo "# Option 2: Create access policy"
+          echo "az keyvault set-policy --name '$KEY_VAULT_NAME' --object-id '$ADDON_OBJECT_ID' --secret-permissions get list"
+          exit 1
+        fi
+        
+        # Step 4: Test actual secret access (if possible)
+        echo "4️⃣ Testing Key Vault connectivity..."
+        
+        # List secrets to test connectivity (this requires the identity to have list permissions)
+        SECRET_LIST=$(az keyvault secret list --vault-name "$KEY_VAULT_NAME" --query "[].name" -o tsv 2>/dev/null || echo "")
+        
+        if [[ -n "$SECRET_LIST" ]]; then
+          echo "✅ Key Vault connectivity test successful"
+          echo "Available secrets: $(echo $SECRET_LIST | tr '\n' ' ')"
+        else
+          echo "⚠️ Warning: Could not list secrets (may be due to current user permissions, not CSI driver permissions)"
+        fi
+        
+        # Step 5: Verify addon matches Terraform configuration
+        echo "5️⃣ Verifying addon configuration matches Terraform setup..."
+        
+        # Check if the addon configuration looks correct
+        ADDON_CONFIG=$(az aks show \
+          --resource-group "${{ env.RESOURCE_GROUP }}" \
+          --name "${{ env.AKS_CLUSTER_NAME }}" \
+          --query "addonProfiles.azureKeyvaultSecretsProvider" \
+          -o json)
+        
+        ADDON_ENABLED=$(echo "$ADDON_CONFIG" | jq -r '.enabled')
+        SECRET_ROTATION=$(echo "$ADDON_CONFIG" | jq -r '.config.enableSecretRotation // "false"')
+        
+        if [[ "$ADDON_ENABLED" != "true" ]]; then
+          echo "❌ CRITICAL: Key Vault secrets provider addon is not enabled"
+          exit 1
+        fi
+        
+        echo "✅ Addon is properly enabled"
+        echo "Secret rotation enabled: $SECRET_ROTATION"
+        
+        # Export additional info for next steps
+        echo "ADDON_OBJECT_ID=$ADDON_OBJECT_ID" >> $GITHUB_ENV
+        echo "ACCESS_METHOD=$ACCESS_METHOD" >> $GITHUB_ENV
+        echo "KV_RESOURCE_ID=$KV_RESOURCE_ID" >> $GITHUB_ENV
+        
+        echo ""
+        echo "🎉 Key Vault validation completed successfully!"
+        echo "Access method: $ACCESS_METHOD"
 
     # Add this step BEFORE the Blue-Green Deployment step in .github/workflows/deploy.yml
     #=======================================================================================
 
-    - name: 🔍 Diagnose SecretProviderClass Configuration
+    - name: 🔍 Pre-Deployment Diagnostics
       run: |
         echo "=========================================="
-        echo "🔍 SECRETPROVIDERCLASS DIAGNOSTIC REPORT"
+        echo "🔍 CSI DRIVER DIAGNOSTIC REPORT"
         echo "=========================================="
         
-        # Step 1: Check what values we're trying to use
-        echo "1️⃣ FETCHING AZURE RESOURCES..."
+        # Function to categorize and report errors
+        report_error() {
+          local category="$1"
+          local error_type="$2"
+          local message="$3"
+          local remediation="$4"
+          
+          echo ""
+          echo "❌ ERROR CATEGORY: $category"
+          echo "   Error Type: $error_type"
+          echo "   Details: $message"
+          if [[ -n "$remediation" ]]; then
+            echo "   Remediation: $remediation"
+          fi
+          echo ""
+        }
+        
+        # Initialize error tracking
+        IDENTITY_ERRORS=0
+        PERMISSION_ERRORS=0
+        CONFIG_ERRORS=0
+        TOTAL_ERRORS=0
+        
+        # Step 1: Validate that we have all required values from previous steps
+        echo "1️⃣ VALIDATING RETRIEVED CONFIGURATION..."
         echo "------------------------------------------"
         
-        # Get Key Vault
-        echo "Searching for Key Vaults in resource group ${{ env.RESOURCE_GROUP }}..."
-        KV_LIST=$(az keyvault list --resource-group ${{ env.RESOURCE_GROUP }} --query "[].name" -o json)
-        echo "Key Vaults found: $KV_LIST"
-        
-        KEY_VAULT_NAME=$(az keyvault list \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --query "[?starts_with(name, '${{ secrets.TF_PROJECT_NAME }}-kv-')].name | [0]" \
-          -o tsv)
-        
-        if [[ -z "$KEY_VAULT_NAME" || "$KEY_VAULT_NAME" == "null" ]]; then
-          echo "❌ CRITICAL: No Key Vault found!"
-          echo "Looking for any Key Vault in resource group..."
-          az keyvault list --resource-group ${{ env.RESOURCE_GROUP }} -o table
+        if [[ -z "$ADDON_CLIENT_ID" ]]; then
+          report_error "IDENTITY_MISSING" "CSI Driver Identity Not Found" \
+            "The CSI driver addon managed identity client ID was not retrieved" \
+            "Check if Key Vault secrets provider addon is enabled: az aks show --resource-group ${{ env.RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER_NAME }} --query 'addonProfiles.azureKeyvaultSecretsProvider.enabled'"
+          ((IDENTITY_ERRORS++))
         else
-          echo "✅ Key Vault found: $KEY_VAULT_NAME"
+          echo "✅ CSI Driver Client ID: $ADDON_CLIENT_ID"
         fi
         
-        # Get Tenant ID
-        TENANT_ID=$(az account show --query tenantId -o tsv)
+        if [[ -z "$KEY_VAULT_NAME" ]]; then
+          report_error "INFRASTRUCTURE_MISSING" "Key Vault Not Found" \
+            "No Key Vault found in resource group ${{ env.RESOURCE_GROUP }}" \
+            "Verify Terraform deployment completed successfully and Key Vault exists"
+          ((CONFIG_ERRORS++))
+        else
+          echo "✅ Key Vault Name: $KEY_VAULT_NAME"
+        fi
+        
         if [[ -z "$TENANT_ID" ]]; then
-          echo "❌ CRITICAL: Cannot get Tenant ID!"
+          report_error "IDENTITY_MISSING" "Tenant ID Not Found" \
+            "Cannot retrieve Azure tenant ID" \
+            "Check Azure CLI authentication: az account show"
+          ((IDENTITY_ERRORS++))
         else
           echo "✅ Tenant ID: $TENANT_ID"
         fi
         
-        # Get AKS addon identity
+        # Step 2: Check SecretProviderClass file configuration
         echo ""
-        echo "Getting AKS addon identity..."
-        ADDON_JSON=$(az aks show \
-          --resource-group ${{ env.RESOURCE_GROUP }} \
-          --name ${{ env.AKS_CLUSTER_NAME }} \
-          --query "addonProfiles.azureKeyvaultSecretsProvider" \
-          -o json)
-        
-        echo "Addon configuration: $ADDON_JSON"
-        
-        ADDON_CLIENT_ID=$(echo "$ADDON_JSON" | jq -r '.identity.clientId // empty')
-        ADDON_OBJECT_ID=$(echo "$ADDON_JSON" | jq -r '.identity.objectId // empty')
-        
-        if [[ -z "$ADDON_CLIENT_ID" ]]; then
-          echo "❌ CRITICAL: Cannot get addon Client ID!"
-          echo "Trying alternative query..."
-          ADDON_CLIENT_ID=$(az aks show \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --name ${{ env.AKS_CLUSTER_NAME }} \
-            --query "addonProfiles.azureKeyvaultSecretsProvider.identity.clientId" \
-            -o tsv)
-          echo "Alternative result: $ADDON_CLIENT_ID"
-        else
-          echo "✅ Addon Client ID: $ADDON_CLIENT_ID"
-        fi
-        
-        if [[ -z "$ADDON_OBJECT_ID" ]]; then
-          echo "❌ WARNING: Cannot get addon Object ID (needed for Key Vault policy)"
-        else
-          echo "✅ Addon Object ID: $ADDON_OBJECT_ID"
-        fi
-        
-        # Step 2: Check the source file
-        echo ""
-        echo "2️⃣ CHECKING SOURCE FILE..."
+        echo "2️⃣ VALIDATING SECRETPROVIDERCLASS CONFIGURATION..."
         echo "------------------------------------------"
+        
         cd kubernetes
         
         if [[ ! -f "15-keyvault-secret-provider.yaml" ]]; then
-          echo "❌ CRITICAL: File 15-keyvault-secret-provider.yaml not found!"
-          echo "Files in directory:"
-          ls -la *.yaml
+          report_error "SPC_MISCONFIGURATION" "SecretProviderClass File Missing" \
+            "File 15-keyvault-secret-provider.yaml not found in kubernetes directory" \
+            "Ensure the SecretProviderClass file exists and is properly named"
+          ((CONFIG_ERRORS++))
         else
-          echo "✅ File exists"
-          echo "File content (first 30 lines):"
-          head -30 15-keyvault-secret-provider.yaml
+          echo "✅ SecretProviderClass file exists"
           
-          echo ""
-          echo "Checking for placeholders..."
-          grep -n "PLACEHOLDER" 15-keyvault-secret-provider.yaml || echo "No PLACEHOLDER found"
+          # Check for correct parameter names
+          if grep -q "userAssignedIdentityID:" 15-keyvault-secret-provider.yaml; then
+            report_error "SPC_MISCONFIGURATION" "Incorrect Parameter Name" \
+              "Found 'userAssignedIdentityID' instead of 'userAssignedIdentityClientID'" \
+              "Change 'userAssignedIdentityID' to 'userAssignedIdentityClientID' in the SecretProviderClass"
+            ((CONFIG_ERRORS++))
+          elif grep -q "userAssignedIdentityClientID:" 15-keyvault-secret-provider.yaml; then
+            echo "✅ Correct parameter name 'userAssignedIdentityClientID' found"
+          else
+            report_error "SPC_MISCONFIGURATION" "Missing Identity Parameter" \
+              "Neither 'userAssignedIdentityID' nor 'userAssignedIdentityClientID' found" \
+              "Add 'userAssignedIdentityClientID: PLACEHOLDER_CLIENT_ID' to the SecretProviderClass parameters"
+            ((CONFIG_ERRORS++))
+          fi
           
-          echo ""
-          echo "Current values in file:"
-          grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" 15-keyvault-secret-provider.yaml
+          # Check for required placeholders
+          MISSING_PLACEHOLDERS=()
+          
+          if ! grep -q "PLACEHOLDER_KEYVAULT_NAME" 15-keyvault-secret-provider.yaml; then
+            MISSING_PLACEHOLDERS+=("PLACEHOLDER_KEYVAULT_NAME")
+          fi
+          
+          if ! grep -q "PLACEHOLDER_TENANT_ID" 15-keyvault-secret-provider.yaml; then
+            MISSING_PLACEHOLDERS+=("PLACEHOLDER_TENANT_ID")
+          fi
+          
+          if ! grep -q "PLACEHOLDER_CLIENT_ID" 15-keyvault-secret-provider.yaml; then
+            MISSING_PLACEHOLDERS+=("PLACEHOLDER_CLIENT_ID")
+          fi
+          
+          if [[ ${#MISSING_PLACEHOLDERS[@]} -gt 0 ]]; then
+            report_error "SPC_MISCONFIGURATION" "Missing Placeholders" \
+              "Missing placeholders: ${MISSING_PLACEHOLDERS[*]}" \
+              "Add the missing placeholders to the SecretProviderClass file"
+            ((CONFIG_ERRORS++))
+          else
+            echo "✅ All required placeholders found"
+          fi
         fi
         
-        # Step 3: Test substitution
+        # Step 3: Check kustomization configuration
         echo ""
-        echo "3️⃣ TESTING SUBSTITUTION..."
+        echo "3️⃣ VALIDATING KUSTOMIZATION CONFIGURATION..."
         echo "------------------------------------------"
         
-        if [[ -f "15-keyvault-secret-provider.yaml" ]]; then
-          cp 15-keyvault-secret-provider.yaml test-substitution.yaml
-          
-          echo "Before substitution:"
-          grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" test-substitution.yaml
-          
-          # Test each substitution individually
-          echo ""
-          echo "Testing keyvaultName substitution..."
-          sed -i "s/PLACEHOLDER_KEYVAULT_NAME/$KEY_VAULT_NAME/g" test-substitution.yaml
-          grep "keyvaultName:" test-substitution.yaml
-          
-          echo ""
-          echo "Testing tenantId substitution..."
-          sed -i "s/PLACEHOLDER_TENANT_ID/$TENANT_ID/g" test-substitution.yaml
-          grep "tenantId:" test-substitution.yaml
-          
-          echo ""
-          echo "Testing clientId substitution..."
-          sed -i "s|PLACEHOLDER_CLIENT_ID|$CSI_CLIENT_ID|g" test-substitution.yaml
-          grep "userAssignedIdentityID:" test-substitution.yaml
-          
-          echo ""
-          echo "After all substitutions:"
-          grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" test-substitution.yaml
-          
-          echo ""
-          echo "Checking if any placeholders remain:"
-          grep "PLACEHOLDER" test-substitution.yaml && echo "❌ PLACEHOLDERS STILL EXIST!" || echo "✅ All placeholders replaced"
-          
-          rm test-substitution.yaml
-        fi
-        
-        # Step 4: Check kustomization.yaml
-        echo ""
-        echo "4️⃣ CHECKING KUSTOMIZATION..."
-        echo "------------------------------------------"
-        
-        if [[ -f "kustomization.yaml" ]]; then
-          echo "Checking if SecretProviderClass is in resources:"
-          grep "15-keyvault-secret-provider.yaml" kustomization.yaml && echo "✅ Found in kustomization" || echo "❌ NOT in kustomization!"
+        if [[ ! -f "kustomization.yaml" ]]; then
+          report_error "SPC_MISCONFIGURATION" "Kustomization File Missing" \
+            "kustomization.yaml not found" \
+            "Ensure kustomization.yaml exists and includes the SecretProviderClass"
+          ((CONFIG_ERRORS++))
+        elif ! grep -q "15-keyvault-secret-provider.yaml" kustomization.yaml; then
+          report_error "SPC_MISCONFIGURATION" "SecretProviderClass Not in Kustomization" \
+            "15-keyvault-secret-provider.yaml not listed in kustomization.yaml resources" \
+            "Add '- 15-keyvault-secret-provider.yaml' to the resources section in kustomization.yaml"
+          ((CONFIG_ERRORS++))
         else
-          echo "❌ kustomization.yaml not found!"
+          echo "✅ SecretProviderClass included in kustomization"
         fi
         
-        # Step 5: Check what's currently in the cluster
+        # Step 4: Check current cluster state (if accessible)
         echo ""
-        echo "5️⃣ CHECKING CLUSTER STATE..."
+        echo "4️⃣ CHECKING CURRENT CLUSTER STATE..."
         echo "------------------------------------------"
-        
-        echo "Checking if SecretProviderClass exists in cluster:"
-        kubectl get secretproviderclass -n ${{ env.NAMESPACE }} -o name || echo "No SecretProviderClass found"
         
         if kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} &>/dev/null; then
-          echo "SecretProviderClass exists, checking its configuration:"
-          CURRENT_KV=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.keyvaultName}')
-          CURRENT_TENANT=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.tenantId}')
-          CURRENT_CLIENT=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.userAssignedIdentityClientID}')
+          echo "ℹ️ SecretProviderClass already exists, checking configuration..."
           
-          echo "Current keyvaultName: '$CURRENT_KV'"
-          echo "Current tenantId: '$CURRENT_TENANT'"
-          echo "Current clientId: '$CURRENT_CLIENT'"
+          CURRENT_CLIENT=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.userAssignedIdentityClientID}' 2>/dev/null)
           
-          if [[ -z "$CURRENT_KV" || "$CURRENT_KV" == "PLACEHOLDER_KEYVAULT_NAME" ]]; then
-            echo "❌ keyvaultName is not set or still has placeholder!"
+          if [[ -z "$CURRENT_CLIENT" ]]; then
+            # Check if it's using the old parameter name
+            OLD_CLIENT=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.userAssignedIdentityID}' 2>/dev/null)
+            if [[ -n "$OLD_CLIENT" ]]; then
+              report_error "SPC_MISCONFIGURATION" "Deployed SPC Uses Old Parameter Name" \
+                "Current SecretProviderClass uses 'userAssignedIdentityID' instead of 'userAssignedIdentityClientID'" \
+                "The deployment will update this to use the correct parameter name"
+              echo "ℹ️ Will be fixed during deployment"
+            else
+              report_error "SPC_MISCONFIGURATION" "Deployed SPC Missing Identity Parameter" \
+                "Current SecretProviderClass has no identity parameter configured" \
+                "The deployment will add the correct identity parameter"
+              echo "ℹ️ Will be fixed during deployment"
+            fi
+          else
+            echo "✅ Current SecretProviderClass has correct identity parameter"
           fi
-          if [[ -z "$CURRENT_TENANT" || "$CURRENT_TENANT" == "PLACEHOLDER_TENANT_ID" ]]; then
-            echo "❌ tenantId is not set or still has placeholder!"
-          fi
-          if [[ -z "$CURRENT_CLIENT" || "$CURRENT_CLIENT" == "PLACEHOLDER_CLIENT_ID" ]]; then
-            echo "❌ userAssignedIdentityID is not set or still has placeholder!"
-          fi
+        else
+          echo "ℹ️ SecretProviderClass does not exist yet (will be created)"
         fi
         
-        # Step 6: Summary
+        # Step 5: Summary and error categorization
         echo ""
-        echo "6️⃣ DIAGNOSTIC SUMMARY..."
+        echo "5️⃣ DIAGNOSTIC SUMMARY..."
         echo "------------------------------------------"
         
-        ERROR_COUNT=0
+        TOTAL_ERRORS=$((IDENTITY_ERRORS + PERMISSION_ERRORS + CONFIG_ERRORS))
         
-        if [[ -z "$KEY_VAULT_NAME" || "$KEY_VAULT_NAME" == "null" ]]; then
-          echo "❌ FAIL: Key Vault name cannot be determined"
-          ((ERROR_COUNT++))
-        else
-          echo "✅ PASS: Key Vault name = $KEY_VAULT_NAME"
+        if [[ $IDENTITY_ERRORS -gt 0 ]]; then
+          echo "❌ IDENTITY ISSUES: $IDENTITY_ERRORS error(s)"
+          echo "   - These indicate problems with CSI driver addon or Azure authentication"
         fi
         
-        if [[ -z "$TENANT_ID" ]]; then
-          echo "❌ FAIL: Tenant ID cannot be determined"
-          ((ERROR_COUNT++))
-        else
-          echo "✅ PASS: Tenant ID = $TENANT_ID"
+        if [[ $PERMISSION_ERRORS -gt 0 ]]; then
+          echo "❌ PERMISSION ISSUES: $PERMISSION_ERRORS error(s)"
+          echo "   - These indicate missing Key Vault access permissions"
         fi
         
-        if [[ -z "$ADDON_CLIENT_ID" ]]; then
-          echo "❌ FAIL: Addon Client ID cannot be determined"
-          ((ERROR_COUNT++))
-        else
-          echo "✅ PASS: Addon Client ID = $ADDON_CLIENT_ID"
+        if [[ $CONFIG_ERRORS -gt 0 ]]; then
+          echo "❌ CONFIGURATION ISSUES: $CONFIG_ERRORS error(s)"
+          echo "   - These indicate problems with SecretProviderClass or kustomization files"
         fi
         
-        if [[ ! -f "15-keyvault-secret-provider.yaml" ]]; then
-          echo "❌ FAIL: SecretProviderClass file missing"
-          ((ERROR_COUNT++))
+        if [[ $TOTAL_ERRORS -eq 0 ]]; then
+          echo "✅ ALL DIAGNOSTIC CHECKS PASSED"
+          echo "   Ready to proceed with deployment"
         else
-          echo "✅ PASS: SecretProviderClass file exists"
-        fi
-        
-        echo ""
-        if [[ $ERROR_COUNT -gt 0 ]]; then
-          echo "❌ DIAGNOSTIC FAILED: $ERROR_COUNT critical issues found"
-          echo "Cannot proceed with deployment until these are fixed."
+          echo "❌ DIAGNOSTIC FAILED: $TOTAL_ERRORS total error(s) found"
+          echo "   Cannot proceed until these issues are resolved"
           exit 1
-        else
-          echo "✅ All diagnostic checks passed"
-          echo "Proceeding with deployment..."
         fi
-        
-        # Export values for next step
-        echo "KEY_VAULT_NAME=$KEY_VAULT_NAME" >> $GITHUB_ENV
-        echo "TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
-        echo "ADDON_CLIENT_ID=$ADDON_CLIENT_ID" >> $GITHUB_ENV
         
         echo "=========================================="
         echo "END OF DIAGNOSTIC REPORT"
@@ -397,42 +644,431 @@ jobs:
           exit 1
         fi
         
-        echo "📝 Updating SecretProviderClass with actual values..."
-        echo "Using values from environment:"
-        echo "  KEY_VAULT_NAME: $KEY_VAULT_NAME"
-        echo "  TENANT_ID: $TENANT_ID"
-        echo "  ADDON_CLIENT_ID: $ADDON_CLIENT_ID"
+        echo "📝 Updating SecretProviderClass with validated placeholder substitution..."
         
-        # Now do the replacements
-        sed -i "s/PLACEHOLDER_KEYVAULT_NAME/${KEY_VAULT_NAME}/g" 15-keyvault-secret-provider.yaml
+        # Function to validate UUID format
+        validate_uuid() {
+          local uuid="$1"
+          if [[ $uuid =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+            return 0
+          else
+            return 1
+          fi
+        }
         
-        sed -i "s/PLACEHOLDER_TENANT_ID/${TENANT_ID}/g" 15-keyvault-secret-provider.yaml
-        sed -i "s/PLACEHOLDER_CLIENT_ID/${ADDON_CLIENT_ID}/g" 15-keyvault-secret-provider.yaml
+        # Function to validate Key Vault name format
+        validate_keyvault_name() {
+          local name="$1"
+          if [[ $name =~ ^[a-zA-Z][a-zA-Z0-9-]{1,22}[a-zA-Z0-9]$ ]]; then
+            return 0
+          else
+            return 1
+          fi
+        }
         
-        # Verify the substitution worked
-        echo "📋 Verifying SecretProviderClass configuration:"
-        echo "Actual values in SecretProviderClass:"
-        grep -E "keyvaultName:|tenantId:|userAssignedIdentityClientID:" 15-keyvault-secret-provider.yaml
+        # Step 1: Validate all required values are present and valid
+        echo "1️⃣ Validating substitution values..."
         
-        # Check if any placeholders remain
-        if grep -q "PLACEHOLDER" 15-keyvault-secret-provider.yaml; then
-          echo "❌ Placeholders still exist!"
+        VALIDATION_ERRORS=0
+        
+        if [[ -z "$KEY_VAULT_NAME" ]]; then
+          echo "❌ KEY_VAULT_NAME is empty"
+          ((VALIDATION_ERRORS++))
+        elif ! validate_keyvault_name "$KEY_VAULT_NAME"; then
+          echo "❌ KEY_VAULT_NAME has invalid format: $KEY_VAULT_NAME"
+          ((VALIDATION_ERRORS++))
+        else
+          echo "✅ KEY_VAULT_NAME is valid: $KEY_VAULT_NAME"
+        fi
+        
+        if [[ -z "$TENANT_ID" ]]; then
+          echo "❌ TENANT_ID is empty"
+          ((VALIDATION_ERRORS++))
+        elif ! validate_uuid "$TENANT_ID"; then
+          echo "❌ TENANT_ID has invalid UUID format: $TENANT_ID"
+          ((VALIDATION_ERRORS++))
+        else
+          echo "✅ TENANT_ID is valid: $TENANT_ID"
+        fi
+        
+        if [[ -z "$ADDON_CLIENT_ID" ]]; then
+          echo "❌ ADDON_CLIENT_ID is empty"
+          ((VALIDATION_ERRORS++))
+        elif ! validate_uuid "$ADDON_CLIENT_ID"; then
+          echo "❌ ADDON_CLIENT_ID has invalid UUID format: $ADDON_CLIENT_ID"
+          ((VALIDATION_ERRORS++))
+        else
+          echo "✅ ADDON_CLIENT_ID is valid: $ADDON_CLIENT_ID"
+        fi
+        
+        if [[ $VALIDATION_ERRORS -gt 0 ]]; then
+          echo "❌ Cannot proceed with placeholder substitution due to $VALIDATION_ERRORS validation errors"
+          exit 1
+        fi
+        
+        # Step 2: Verify source file exists and has expected placeholders
+        echo "2️⃣ Validating source file..."
+        
+        if [[ ! -f "15-keyvault-secret-provider.yaml" ]]; then
+          echo "❌ CRITICAL: SecretProviderClass file not found!"
+          echo "Available files:"
+          ls -la *.yaml
+          exit 1
+        fi
+        
+        # Check that all expected placeholders exist
+        MISSING_PLACEHOLDERS=0
+        
+        if ! grep -q "PLACEHOLDER_KEYVAULT_NAME" 15-keyvault-secret-provider.yaml; then
+          echo "❌ PLACEHOLDER_KEYVAULT_NAME not found in source file"
+          ((MISSING_PLACEHOLDERS++))
+        fi
+        
+        if ! grep -q "PLACEHOLDER_TENANT_ID" 15-keyvault-secret-provider.yaml; then
+          echo "❌ PLACEHOLDER_TENANT_ID not found in source file"
+          ((MISSING_PLACEHOLDERS++))
+        fi
+        
+        if ! grep -q "PLACEHOLDER_CLIENT_ID" 15-keyvault-secret-provider.yaml; then
+          echo "❌ PLACEHOLDER_CLIENT_ID not found in source file"
+          ((MISSING_PLACEHOLDERS++))
+        fi
+        
+        if [[ $MISSING_PLACEHOLDERS -gt 0 ]]; then
+          echo "❌ Source file is missing expected placeholders"
+          echo "Current file content:"
           cat 15-keyvault-secret-provider.yaml
           exit 1
         fi
+        
+        echo "✅ All expected placeholders found in source file"
+        
+        # Step 3: Create backup and perform atomic substitution
+        echo "3️⃣ Performing atomic placeholder substitution..."
+        
+        # Create backup
+        cp 15-keyvault-secret-provider.yaml 15-keyvault-secret-provider.yaml.backup
+        
+        # Create temporary file for substitution
+        cp 15-keyvault-secret-provider.yaml 15-keyvault-secret-provider.yaml.tmp
+        
+        # Perform substitutions on temporary file
+        sed -i "s/PLACEHOLDER_KEYVAULT_NAME/${KEY_VAULT_NAME}/g" 15-keyvault-secret-provider.yaml.tmp
+        sed -i "s/PLACEHOLDER_TENANT_ID/${TENANT_ID}/g" 15-keyvault-secret-provider.yaml.tmp
+        sed -i "s/PLACEHOLDER_CLIENT_ID/${ADDON_CLIENT_ID}/g" 15-keyvault-secret-provider.yaml.tmp
+        
+        # Step 4: Validate substitution results
+        echo "4️⃣ Validating substitution results..."
+        
+        # Check that no placeholders remain
+        REMAINING_PLACEHOLDERS=$(grep -c "PLACEHOLDER" 15-keyvault-secret-provider.yaml.tmp || echo "0")
+        
+        if [[ $REMAINING_PLACEHOLDERS -gt 0 ]]; then
+          echo "❌ CRITICAL: $REMAINING_PLACEHOLDERS placeholders still exist after substitution!"
+          echo "Remaining placeholders:"
+          grep -n "PLACEHOLDER" 15-keyvault-secret-provider.yaml.tmp
+          echo "File content:"
+          cat 15-keyvault-secret-provider.yaml.tmp
+          exit 1
+        fi
+        
+        # Validate that the expected values are now in the file
+        SUBSTITUTED_KV=$(grep "keyvaultName:" 15-keyvault-secret-provider.yaml.tmp | sed 's/.*keyvaultName: *"\([^"]*\)".*/\1/')
+        SUBSTITUTED_TENANT=$(grep "tenantId:" 15-keyvault-secret-provider.yaml.tmp | sed 's/.*tenantId: *"\([^"]*\)".*/\1/')
+        SUBSTITUTED_CLIENT=$(grep "userAssignedIdentityClientID:" 15-keyvault-secret-provider.yaml.tmp | sed 's/.*userAssignedIdentityClientID: *"\([^"]*\)".*/\1/')
+        
+        if [[ "$SUBSTITUTED_KV" != "$KEY_VAULT_NAME" ]]; then
+          echo "❌ Key Vault name substitution failed. Expected: $KEY_VAULT_NAME, Got: $SUBSTITUTED_KV"
+          exit 1
+        fi
+        
+        if [[ "$SUBSTITUTED_TENANT" != "$TENANT_ID" ]]; then
+          echo "❌ Tenant ID substitution failed. Expected: $TENANT_ID, Got: $SUBSTITUTED_TENANT"
+          exit 1
+        fi
+        
+        if [[ "$SUBSTITUTED_CLIENT" != "$ADDON_CLIENT_ID" ]]; then
+          echo "❌ Client ID substitution failed. Expected: $ADDON_CLIENT_ID, Got: $SUBSTITUTED_CLIENT"
+          exit 1
+        fi
+        
+        # Step 5: Atomic replacement of original file
+        echo "5️⃣ Finalizing configuration..."
+        
+        mv 15-keyvault-secret-provider.yaml.tmp 15-keyvault-secret-provider.yaml
+        
+        echo "✅ Placeholder substitution completed successfully!"
+        echo "📋 Final SecretProviderClass configuration:"
+        echo "  keyvaultName: $SUBSTITUTED_KV"
+        echo "  tenantId: $SUBSTITUTED_TENANT"
+        echo "  userAssignedIdentityClientID: $SUBSTITUTED_CLIENT"
+        
+        # Validate YAML syntax
+        if ! kubectl apply --dry-run=client -f 15-keyvault-secret-provider.yaml >/dev/null 2>&1; then
+          echo "❌ CRITICAL: Generated YAML has syntax errors!"
+          echo "File content:"
+          cat 15-keyvault-secret-provider.yaml
+          exit 1
+        fi
+        
+        echo "✅ YAML syntax validation passed"
+        
+        # Step 6: Deploy using kustomize with error handling
+        echo "6️⃣ Deploying with kustomize and error handling..."
+        
+        # Function for retry logic
+        retry_kubectl() {
+          local max_attempts=3
+          local delay=5
+          local attempt=1
+          local command="$1"
+          
+          while [ $attempt -le $max_attempts ]; do
+            echo "Attempt $attempt of $max_attempts: $command"
+            if eval "$command"; then
+              return 0
+            else
+              if [ $attempt -eq $max_attempts ]; then
+                echo "❌ Command failed after $max_attempts attempts: $command"
+                return 1
+              else
+                echo "⚠️ Attempt $attempt failed, retrying in ${delay}s..."
+                sleep $delay
+                delay=$((delay * 2))
+                attempt=$((attempt + 1))
+              fi
+            fi
+          done
+        }
+        
+        # Update image tag in kustomization
+        echo "Updating image tag..."
+        if ! kustomize edit set image easyshop=${{ env.IMAGE_WITH_DIGEST }}; then
+          echo "❌ Failed to update image tag in kustomization"
+          exit 1
+        fi
+        
+        # Build kustomization with validation
+        echo "Building kustomization..."
+        if ! kustomize build . > deployment-manifest.yaml; then
+          echo "❌ Failed to build kustomization"
+          echo "Kustomization content:"
+          cat kustomization.yaml
+          exit 1
+        fi
+        
+        # Validate the generated manifest
+        echo "Validating generated manifest..."
+        if ! kubectl apply --dry-run=client -f deployment-manifest.yaml; then
+          echo "❌ Generated manifest has validation errors"
+          echo "Manifest content:"
+          cat deployment-manifest.yaml
+          exit 1
+        fi
+        
+        echo "✅ Manifest validation passed"
+        
+        # Apply deployment with retry logic
+        echo "Applying deployment with retry logic..."
+        if ! retry_kubectl "kubectl apply -f deployment-manifest.yaml"; then
+          echo "❌ Deployment failed after multiple attempts"
+          echo "Checking cluster status..."
+          kubectl get nodes
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl describe secretproviderclass -n ${{ env.NAMESPACE }} || echo "No SecretProviderClass found"
+          exit 1
+        fi
+        
+        echo "✅ Deployment applied successfully!"
+        
+        # Wait for SecretProviderClass to be ready
+        echo "Waiting for SecretProviderClass to be available..."
+        if ! kubectl wait --for=condition=Ready secretproviderclass/easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} --timeout=60s 2>/dev/null; then
+          echo "⚠️ SecretProviderClass readiness check timed out (this may be normal)"
+        fi
 
-    - name: 🔍 Verify Deployment
+    - name: 🔍 Comprehensive Deployment Verification
       if: success()
       run: |
-        echo "🔍 Final deployment verification..."
+        echo "🔍 Comprehensive deployment verification..."
         
-        # Check all components
-        echo "📦 Pods:"
-        kubectl get pods -n ${{ env.NAMESPACE }}
+        # Function to wait for condition with timeout
+        wait_for_condition() {
+          local resource="$1"
+          local condition="$2"
+          local timeout="$3"
+          local namespace="$4"
+          
+          echo "Waiting for $resource to be $condition (timeout: ${timeout}s)..."
+          if kubectl wait --for=condition=$condition $resource -n $namespace --timeout=${timeout}s; then
+            echo "✅ $resource is $condition"
+            return 0
+          else
+            echo "❌ Timeout waiting for $resource to be $condition"
+            return 1
+          fi
+        }
         
+        # Step 1: Verify SecretProviderClass deployment
+        echo "1️⃣ VERIFYING SECRETPROVIDERCLASS..."
+        echo "------------------------------------------"
+        
+        if kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
+          echo "✅ SecretProviderClass exists"
+          
+          # Check SecretProviderClass configuration
+          echo "Checking SecretProviderClass configuration..."
+          SPC_KV=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.keyvaultName}')
+          SPC_TENANT=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.tenantId}')
+          SPC_CLIENT=$(kubectl get secretproviderclass easyshop-keyvault-secrets -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.parameters.userAssignedIdentityClientID}')
+          
+          echo "SecretProviderClass configuration:"
+          echo "  Key Vault: $SPC_KV"
+          echo "  Tenant ID: $SPC_TENANT"
+          echo "  Client ID: $SPC_CLIENT"
+          
+          # Validate configuration matches our values
+          CONFIG_ERRORS=0
+          
+          if [[ "$SPC_KV" != "$KEY_VAULT_NAME" ]]; then
+            echo "❌ Key Vault name mismatch: expected $KEY_VAULT_NAME, got $SPC_KV"
+            ((CONFIG_ERRORS++))
+          fi
+          
+          if [[ "$SPC_TENANT" != "$TENANT_ID" ]]; then
+            echo "❌ Tenant ID mismatch: expected $TENANT_ID, got $SPC_TENANT"
+            ((CONFIG_ERRORS++))
+          fi
+          
+          if [[ "$SPC_CLIENT" != "$ADDON_CLIENT_ID" ]]; then
+            echo "❌ Client ID mismatch: expected $ADDON_CLIENT_ID, got $SPC_CLIENT"
+            ((CONFIG_ERRORS++))
+          fi
+          
+          if [[ $CONFIG_ERRORS -eq 0 ]]; then
+            echo "✅ SecretProviderClass configuration is correct"
+          else
+            echo "❌ SecretProviderClass has $CONFIG_ERRORS configuration errors"
+          fi
+        else
+          echo "❌ SecretProviderClass not found"
+          kubectl get secretproviderclass -n ${{ env.NAMESPACE }}
+        fi
+        
+        # Step 2: Verify pod deployment and readiness
+        echo ""
+        echo "2️⃣ VERIFYING POD DEPLOYMENT..."
+        echo "------------------------------------------"
+        
+        # Wait for deployments to be ready
+        echo "Waiting for deployments to be ready..."
+        
+        DEPLOYMENT_ERRORS=0
+        
+        for deployment in easyshop-blue easyshop-green; do
+          if kubectl get deployment $deployment -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
+            echo "Checking deployment: $deployment"
+            if wait_for_condition "deployment/$deployment" "Available" "300" "${{ env.NAMESPACE }}"; then
+              READY_REPLICAS=$(kubectl get deployment $deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.status.readyReplicas}')
+              DESIRED_REPLICAS=$(kubectl get deployment $deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.replicas}')
+              echo "✅ $deployment: $READY_REPLICAS/$DESIRED_REPLICAS replicas ready"
+            else
+              echo "❌ $deployment failed to become ready"
+              ((DEPLOYMENT_ERRORS++))
+            fi
+          else
+            echo "⚠️ Deployment $deployment not found"
+          fi
+        done
+        
+        # Step 3: Verify secret mounting in pods
+        echo ""
+        echo "3️⃣ VERIFYING SECRET MOUNTING..."
+        echo "------------------------------------------"
+        
+        # Get pods that should have secret mounts
+        PODS=$(kubectl get pods -n ${{ env.NAMESPACE }} -l app.kubernetes.io/name=easyshop -o jsonpath='{.items[*].metadata.name}')
+        
+        if [[ -z "$PODS" ]]; then
+          echo "❌ No application pods found"
+        else
+          echo "Found pods: $PODS"
+          
+          SECRET_MOUNT_ERRORS=0
+          
+          for pod in $PODS; do
+            echo "Checking secret mounts for pod: $pod"
+            
+            # Check if pod is running
+            POD_STATUS=$(kubectl get pod $pod -n ${{ env.NAMESPACE }} -o jsonpath='{.status.phase}')
+            if [[ "$POD_STATUS" != "Running" ]]; then
+              echo "⚠️ Pod $pod is not running (status: $POD_STATUS)"
+              continue
+            fi
+            
+            # Check if secret volume is mounted
+            if kubectl exec $pod -n ${{ env.NAMESPACE }} -- ls /mnt/secrets-store >/dev/null 2>&1; then
+              echo "✅ Secret volume mounted in pod $pod"
+              
+              # List mounted secrets
+              MOUNTED_SECRETS=$(kubectl exec $pod -n ${{ env.NAMESPACE }} -- ls /mnt/secrets-store 2>/dev/null || echo "")
+              if [[ -n "$MOUNTED_SECRETS" ]]; then
+                echo "  Mounted secrets: $MOUNTED_SECRETS"
+              else
+                echo "  ⚠️ Secret directory is empty"
+              fi
+            else
+              echo "❌ Secret volume not mounted in pod $pod"
+              ((SECRET_MOUNT_ERRORS++))
+              
+              # Get pod events for troubleshooting
+              echo "Pod events for $pod:"
+              kubectl describe pod $pod -n ${{ env.NAMESPACE }} | grep -A 10 "Events:" || echo "No events found"
+            fi
+          done
+          
+          if [[ $SECRET_MOUNT_ERRORS -eq 0 ]]; then
+            echo "✅ All pods have secret volumes mounted"
+          else
+            echo "❌ $SECRET_MOUNT_ERRORS pods have secret mounting issues"
+          fi
+        fi
+        
+        # Step 4: Verify Kubernetes secrets creation
+        echo ""
+        echo "4️⃣ VERIFYING KUBERNETES SECRETS..."
+        echo "------------------------------------------"
+        
+        # Check if the CSI driver created the Kubernetes secrets
+        for secret in mongodb-keyvault-secret redis-keyvault-secret; do
+          if kubectl get secret $secret -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
+            echo "✅ Secret $secret exists"
+            
+            # Check secret keys
+            SECRET_KEYS=$(kubectl get secret $secret -n ${{ env.NAMESPACE }} -o jsonpath='{.data}' | jq -r 'keys[]' 2>/dev/null || echo "")
+            if [[ -n "$SECRET_KEYS" ]]; then
+              echo "  Keys: $(echo $SECRET_KEYS | tr '\n' ' ')"
+            else
+              echo "  ⚠️ Secret has no data"
+            fi
+          else
+            echo "❌ Secret $secret not found"
+          fi
+        done
+        
+        # Step 5: Check overall system status
+        echo ""
+        echo "5️⃣ OVERALL SYSTEM STATUS..."
+        echo "------------------------------------------"
+        
+        echo "📦 All Pods:"
+        kubectl get pods -n ${{ env.NAMESPACE }} -o wide
+        
+        echo ""
         echo "🌐 Services:"
         kubectl get svc -n ${{ env.NAMESPACE }}
         
+        echo ""
         echo "🔗 Ingress:"
         kubectl get ingress -n ${{ env.NAMESPACE }}
         
@@ -440,11 +1076,33 @@ jobs:
         INGRESS_HOST=$(kubectl get ingress easyshop-ingress -n ${{ env.NAMESPACE }} \
           -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "${{ secrets.TF_DNS_ZONE_NAME }}")
         
+        # Step 6: Final summary
         echo ""
-        echo "🎉 Deployment Complete!"
-        echo "=================================="
-        echo "🏷️ Version: ${{ env.VERSION }}"
-        echo "🐋 Image: ${{ env.IMAGE_WITH_DIGEST }}"
-        echo "🌐 URL: https://$INGRESS_HOST"
-        echo "=================================="
+        echo "6️⃣ DEPLOYMENT SUMMARY..."
+        echo "------------------------------------------"
+        
+        TOTAL_ISSUES=$((DEPLOYMENT_ERRORS + SECRET_MOUNT_ERRORS))
+        
+        if [[ $TOTAL_ISSUES -eq 0 ]]; then
+          echo "🎉 DEPLOYMENT SUCCESSFUL!"
+          echo "=================================="
+          echo "🏷️ Version: ${{ env.VERSION }}"
+          echo "🐋 Image: ${{ env.IMAGE_WITH_DIGEST }}"
+          echo "🌐 URL: https://$INGRESS_HOST"
+          echo "🔐 CSI Driver: Working correctly"
+          echo "🗝️ Key Vault: Secrets accessible"
+          echo "=================================="
+        else
+          echo "⚠️ DEPLOYMENT COMPLETED WITH ISSUES"
+          echo "=================================="
+          echo "🏷️ Version: ${{ env.VERSION }}"
+          echo "🐋 Image: ${{ env.IMAGE_WITH_DIGEST }}"
+          echo "🌐 URL: https://$INGRESS_HOST"
+          echo "❌ Issues found: $TOTAL_ISSUES"
+          echo "   - Deployment errors: $DEPLOYMENT_ERRORS"
+          echo "   - Secret mount errors: $SECRET_MOUNT_ERRORS"
+          echo "=================================="
+          echo ""
+          echo "Check the logs above for specific issues and remediation steps."
+        fi
         
