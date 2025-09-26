@@ -7,9 +7,8 @@ resources:
 - 01-namespace.yaml
 - 04-configmap.yaml
 - 05-secrets.yaml
-- 08a-blue-deployment.yml       # CRITICAL: Blue deployment
-- 08b-green-deployment.yaml     # CRITICAL: Green deployment  
-- 09-easyshop-service.yaml      # CRITICAL: Service for traffic switching
+- 08-easyshop-deployment.yaml      # Single deployment file
+- 09-easyshop-service.yaml          # Single service
 - 15-keyvault-secret-provider.yaml
 - 06-mongodb-service.yaml
 - 07-mongodb-statefulset.yaml
@@ -21,7 +20,7 @@ resources:
 - cert-manager-issuer.yaml
 - easyshop-certificate.yaml
 
-# Keep original commonLabels (ignore deprecation warning)
+# Keep original commonLabels
 commonLabels:
   app.kubernetes.io/name: easyshop
   app.kubernetes.io/part-of: easyshop-platform
@@ -43,13 +42,12 @@ patches:
     kind: StatefulSet
     name: mongodb
 
-# Replica overrides
+# Replica overrides - single deployment
 replicas:
-- name: easyshop-blue
-  count: 2
-- name: easyshop-green
+- name: easyshop
   count: 2
 - name: mongodb
   count: 1
 - name: redis
   count: 1
+  

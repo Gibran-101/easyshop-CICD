@@ -414,10 +414,10 @@ jobs:
         echo "🎉 Key Vault validation completed successfully!"
         echo "Access method: $ACCESS_METHOD"
 
-    - name: 🚀 Blue-Green Deployment
+    - name: 🚀 Standard Deployment
       run: |
         set -e
-        echo "🚀 Starting Blue-Green Deployment..."
+        echo "🚀 Starting Deployment..."
         
         # Create namespace
         kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
@@ -746,26 +746,21 @@ jobs:
         echo "2️⃣ VERIFYING POD DEPLOYMENT..."
         echo "------------------------------------------"
         
-        # Wait for deployments to be ready
-        echo "Waiting for deployments to be ready..."
+        # Wait for deployment to be ready
+        echo "Waiting for deployment to be ready..."
         
-        DEPLOYMENT_ERRORS=0
-        
-        for deployment in easyshop-blue easyshop-green; do
-          if kubectl get deployment $deployment -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
-            echo "Checking deployment: $deployment"
-            if wait_for_condition "deployment/$deployment" "Available" "300" "${{ env.NAMESPACE }}"; then
-              READY_REPLICAS=$(kubectl get deployment $deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.status.readyReplicas}')
-              DESIRED_REPLICAS=$(kubectl get deployment $deployment -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.replicas}')
-              echo "✅ $deployment: $READY_REPLICAS/$DESIRED_REPLICAS replicas ready"
-            else
-              echo "❌ $deployment failed to become ready"
-              ((DEPLOYMENT_ERRORS++))
-            fi
+        if kubectl get deployment easyshop -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
+          echo "Checking deployment: easyshop"
+          if wait_for_condition "deployment/easyshop" "Available" "300" "${{ env.NAMESPACE }}"; then
+            READY_REPLICAS=$(kubectl get deployment easyshop -n ${{ env.NAMESPACE }} -o jsonpath='{.status.readyReplicas}')
+            DESIRED_REPLICAS=$(kubectl get deployment easyshop -n ${{ env.NAMESPACE }} -o jsonpath='{.spec.replicas}')
+            echo "✅ easyshop deployment: $READY_REPLICAS/$DESIRED_REPLICAS replicas ready"
           else
-            echo "⚠️ Deployment $deployment not found"
+            echo "❌ easyshop deployment failed to become ready"
           fi
-        done
+        else
+          echo "❌ Deployment easyshop not found"
+        fi
         
         # Step 3: Verify secret mounting in pods
         echo ""

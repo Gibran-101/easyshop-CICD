@@ -1,0 +1,117 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: easyshop
+  namespace: easyshop
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: easyshop
+  template:
+    metadata:
+      labels:
+        app: easyshop
+    spec:
+      containers:
+        - name: easyshop
+          image: easyshop
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          
+          # Environment variables from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: easyshop-config
+            - secretRef:
+                name: easyshop-secrets
+          
+          # Specific environment variables (from Azure Key Vault)
+          env:
+            # NextAuth configuration
+            - name: NEXTAUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: easyshop-config
+                  key: NEXTAUTH_URL
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: easyshop-secrets
+                  key: NEXTAUTH_SECRET
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: easyshop-secrets
+                  key: JWT_SECRET
+            
+            # MongoDB connection (from Azure Key Vault)
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-keyvault-secret
+                  key: mongodb-uri
+            
+            # Redis connection (from Azure Key Vault)
+            - name: REDIS_URI
+              valueFrom:
+                secretKeyRef:
+                  name: redis-keyvault-secret
+                  key: redis-uri
+            
+            # Redis password (from Azure Key Vault)
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-keyvault-secret
+                  key: password
+          
+          # Volume mounts for Azure Key Vault secrets
+          volumeMounts:
+          - name: keyvault-secrets
+            mountPath: "/mnt/secrets-store"
+            readOnly: true
+          
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          
+          # Health checks
+          startupProbe:
+            httpGet:
+              path: /
+              port: 3000
+            failureThreshold: 30
+            periodSeconds: 10
+            
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+      
+      # Volumes for Azure Key Vault integration
+      volumes:
+      - name: keyvault-secrets
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "easyshop-keyvault-secrets"
